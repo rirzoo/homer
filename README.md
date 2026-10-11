@@ -1,6 +1,8 @@
-# homer
+# Homer
 
-homer is a terminal mail client for people with more than one inbox. It handles Gmail, any IMAP/SMTP server, and institute or work mail on Microsoft 365 (Outlook). It started at IIT Patna, and IITP accounts have their own setup section below.
+Homer is for people who are tired of clicking through a mail app to write routine mail and keep their inboxes tidy. Its command line gives AI agents such as Claude Code, Codex and OpenCode access to your mailboxes, so they can do that work for you. When you want to go through mail yourself, the TUI lets you do it without leaving the terminal.
+
+Homer handles Gmail, any IMAP/SMTP server, and institute or work mail on Microsoft 365 (Outlook).
 
 ```
 $ homer list -a inst -n 3
@@ -15,9 +17,9 @@ You can list, search and read mail, save attachments, send mail with attachments
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
-For going through mail yourself, run `homer` on its own to get a full-screen interface you drive from the keyboard. It's the one part of homer where opening a message marks it read, the way a normal mail app does.
+For going through mail yourself, run `homer` on its own to get a full-screen interface you drive from the keyboard. It's the one part of Homer where opening a message marks it read, the way a normal mail app does.
 
-The command line uses only the Python standard library. The TUI uses Textual, which installs with homer. Passwords and tokens are stored in your system keyring, not in files.
+The command line uses only the Python standard library. The TUI uses Textual, which installs with Homer. Passwords and tokens are stored in your system keyring, not in files.
 
 ## Contents
 
@@ -26,12 +28,12 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
   - [Updating and removing](#updating-and-removing)
 - [Setup](#setup)
   - [Linking a Gmail account](#linking-a-gmail-account)
-  - [Linking an IIT Patna account](#linking-an-iit-patna-account)
-  - [Linking another institute / Microsoft 365 account](#linking-another-institute--microsoft-365-account)
+  - [Linking a Microsoft 365 account](#linking-a-microsoft-365-account)
     - [Option A: register your own app](#option-a-register-your-own-app)
     - [Option B: ask your IT department](#option-b-ask-your-it-department)
 - [Usage](#usage)
   - [HTML mail](#html-mail)
+- [Using Homer from an agent](#using-homer-from-an-agent)
 - [TUI](#tui)
   - [Folders](#folders)
   - [Writing mail](#writing-mail)
@@ -47,7 +49,7 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
 
 ## Install
 
-homer installs for your user only, into `~/.local/bin`. You don't need `sudo` for homer itself, and since your config and keyring are per user anyway, there's no reason to install it system wide.
+Homer installs for your user only, into `~/.local/bin`. You don't need `sudo` for Homer itself, and since your config and keyring are per user anyway, there's no reason to install it system wide.
 
 1. Install pipx, and git if you don't have it:
 
@@ -56,7 +58,7 @@ homer installs for your user only, into `~/.local/bin`. You don't need `sudo` fo
    sudo apt install pipx git        # Debian / Ubuntu
    ```
 
-2. Install homer:
+2. Install Homer:
 
    ```sh
    pipx install git+https://github.com/rirzoo/homer.git
@@ -76,7 +78,7 @@ homer installs for your user only, into `~/.local/bin`. You don't need `sudo` fo
 
 4. Run `homer --help`. If you get `command not found`, your shell hasn't picked up the new PATH yet. Open a new terminal or run `source ~/.bashrc`.
 
-You can use pip instead of pipx: `git clone https://github.com/rirzoo/homer.git && cd homer && pip install --user .`. Newer Ubuntu and Debian releases refuse that with an `externally-managed-environment` error, so stick with pipx there. To try homer without installing it, run `python3 -m homer ...` from the cloned folder.
+You can use pip instead of pipx: `git clone https://github.com/rirzoo/homer.git && cd homer && pip install --user .`. Newer Ubuntu and Debian releases refuse that with an `externally-managed-environment` error, so stick with pipx there. To try Homer without installing it, run `python3 -m homer ...` from the cloned folder.
 
 ### Updating and removing
 
@@ -90,7 +92,7 @@ Your config in `~/.config/homer/` stays until you delete it yourself.
 
 ## Setup
 
-homer doesn't create a config for you. Make the folder with `mkdir -p ~/.config/homer`, then create `~/.config/homer/accounts.toml` in any text editor (set `$HOMER_CONFIG` if you want it somewhere else). Each account gets a short name that you pass with `-a`:
+Homer doesn't create a config for you. Make the folder with `mkdir -p ~/.config/homer`, then create `~/.config/homer/accounts.toml` in any text editor (set `$HOMER_CONFIG` if you want it somewhere else). Each account gets a short name that you pass with `-a`:
 
 ```toml
 default = "gmail"            # used when -a is omitted
@@ -109,7 +111,7 @@ Then link each account with `homer login -a <name>` (details below) and check wi
 
 ### Linking a Gmail account
 
-Gmail needs an app password, a 16-character password that only homer uses:
+Gmail needs an app password, a 16-character password that only Homer uses:
 
 1. Turn on 2-Step Verification: <https://myaccount.google.com/signinoptions/twosv>
 2. Create an app password: <https://myaccount.google.com/apppasswords>
@@ -125,28 +127,9 @@ imap = "imap.example.com"    # port 993, SSL      (imap_port to override)
 smtp = "smtp.example.com"    # port 587, STARTTLS (smtp_port to override)
 ```
 
-### Linking an IIT Patna account
+### Linking a Microsoft 365 account
 
-IITP mail runs on Microsoft 365 and only lets Microsoft's own apps sign in, so homer signs in as the Microsoft Office app using that app's public client ID. IITP's IT department has said this is fine for IITP accounts. Add this to your config, with your own address:
-
-```toml
-[accounts.inst]
-email = "you@iitp.ac.in"
-provider = "outlook"
-tenant = "iitp.ac.in"
-client_id = "d3590ed6-52b3-4102-aeff-aad2292ab01c"   # Microsoft Office
-scope = "https://graph.microsoft.com/.default offline_access"
-```
-
-Keep the `scope` line as it is. The Office app can't ask for mail permissions one by one (Microsoft answers with `AADSTS65002`), but with `.default` it gets the mail read and send permissions it already has.
-
-Then run `homer login -a inst`. It prints a URL and a code. Open the URL in any browser, enter the code, and sign in with your IITP account as usual, MFA included. homer stores a refresh token in your keyring and renews it on its own, so you only do this once. Check that it worked with `homer list -a inst`.
-
-This approval covers IITP only. If you're somewhere else, use the next section.
-
-### Linking another institute / Microsoft 365 account
-
-Microsoft 365 doesn't accept passwords from third-party apps, so homer signs in with OAuth through Microsoft Graph. For that you need a client ID, which tells Microsoft which app you're signing in through. There are two ways to get one.
+Microsoft 365 doesn't accept passwords from third-party apps, so Homer signs in with OAuth through Microsoft Graph. For that you need a client ID, which tells Microsoft which app you're signing in through. There are two ways to get one.
 
 #### Option A: register your own app
 
@@ -171,7 +154,7 @@ Then sign in with:
 homer login -a inst
 ```
 
-It prints a code and a URL. Open the URL in any browser, enter the code, and sign in as usual (MFA included). homer keeps a refresh token in your keyring and renews it automatically.
+It prints a code and a URL. Open the URL in any browser, enter the code, and sign in as usual (MFA included). Homer keeps a refresh token in your keyring and renews it automatically.
 
 ## Usage
 
@@ -209,7 +192,7 @@ homer send --to friend@example.com -s "Notes" --html <<'EOF'
 EOF
 ```
 
-homer also includes a plain-text version of the body for mail apps that don't show HTML. That version keeps the link text but drops the URL, so write out any address people need to see.
+Homer also includes a plain-text version of the body for mail apps that don't show HTML. That version keeps the link text but drops the URL, so write out any address people need to see.
 
 A reply or forward with `--html` quotes the original under your text, as HTML if the original was HTML and as text if it wasn't. Images embedded in an HTML original stay in place in the quote. Without `--html`, a forward sends those images as ordinary attachments.
 
@@ -225,13 +208,34 @@ Provider differences:
 
 Outlook numbers are reassigned on every `list`, so run `list` on the folder right before `read`/`move`/`mark`.
 
+## Using Homer from an agent
+
+An agent uses Homer more reliably when a skill tells it when to reach for Homer and how. For Claude Code, save something like this as `~/.claude/skills/homer-mail/SKILL.md` and change the accounts to yours:
+
+```markdown
+---
+name: homer-mail
+description: Send, draft, reply to, read or search email with the homer CLI. Use whenever I ask to email someone, send a file, answer a mail or check my mail.
+---
+
+Use `homer` for all mail. `homer --help` and `homer <command> --help` list the options.
+
+- Accounts: `gmail` (the default, personal mail) and `inst` (institute mail). Pick one with `-a`.
+- Pass the body on stdin with a quoted heredoc (`<<'EOF'`) so quotes and `$` survive.
+- Answer a mail with `homer reply ID`, not `send`, so it stays in the same thread.
+- On Outlook accounts, IDs change with every `list`. Run `list` right before `read`, `move` or `mark`.
+- Before sending, show me the recipient, subject and body and wait for my OK. If unsure, use `--draft`.
+```
+
+You can add your contacts' addresses and a signature to the same file. Codex and OpenCode read the same kind of instructions from `AGENTS.md`.
+
 ## TUI
 
-`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with homer. [TUI.md](TUI.md) explains how it's meant to be used and what it can't do, and [FRAME.md](FRAME.md) has a wireframe of every window with the reasons behind each choice.
+`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with Homer. [TUI.md](TUI.md) explains how it's meant to be used and what it can't do, and [FRAME.md](FRAME.md) has a wireframe of every window with the reasons behind each choice.
 
 The screen has two panes: your mail on the left and the conversation under the cursor on the right. `f` opens a third pane on the left with your folders and your other accounts, and closes again once you pick one. A row is a whole conversation, so your replies sit next to the mail they answer (`T` switches to one row per mail). Below 100 columns you get one pane at a time.
 
-Nothing waits on the server. Archive, delete, move and mark take effect on screen at once and sync in the background, and `u` undoes the last one. If the server refuses, the row comes back and the status line says why. Mail you've already seen is cached, so the list shows up the moment homer starts.
+Nothing waits on the server. Archive, delete, move and mark take effect on screen at once and sync in the background, and `u` undoes the last one. If the server refuses, the row comes back and the status line says why. Mail you've already seen is cached, so the list shows up the moment Homer starts.
 
 | Key | In the list | In a conversation (`Enter`) |
 |---|---|---|
@@ -251,15 +255,15 @@ Nothing waits on the server. Archive, delete, move and mark take effect on scree
 | `?` | every key for the window you're in | same |
 | `q` | quit | back to the list |
 
-Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `is:read` `has:attachment` `before:2026-10-01` `after:2026-09-01` and plain words. homer translates it for Gmail or Outlook. `+` loads 50 older conversations and `ctrl+r` syncs right away; homer also syncs every two minutes on its own.
+Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `is:read` `has:attachment` `before:2026-10-01` `after:2026-09-01` and plain words. Homer translates it for Gmail or Outlook. `+` loads 50 older conversations and `ctrl+r` syncs right away; Homer also syncs every two minutes on its own.
 
 ### Folders
 
-Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
+Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
 
 ### Writing mail
 
-`c`, `r`, `R` and `F` open a form. You type the recipients (with suggestions from people you've mailed) and the subject in homer, and the body in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`), which `b` or `Enter` in the Subject field opens. Inside the form `Esc` switches from typing to single-key commands: `s` send, `a` attach, `d` save a draft, `q` close (keeps a draft), `D` discard. `ctrl+s` sends from anywhere.
+`c`, `r`, `R` and `F` open a form. You type the recipients (with suggestions from people you've mailed) and the subject in Homer, and the body in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`), which `b` or `Enter` in the Subject field opens. Inside the form `Esc` switches from typing to single-key commands: `s` send, `a` attach, `d` save a draft, `q` close (keeps a draft), `D` discard. `ctrl+s` sends from anywhere.
 
 Every mail from the TUI goes out as HTML with a plain-text copy and ends with "Sent with homer", linking to this repository. The footer is shown in the form and can't be removed there; `homer send` from the command line doesn't add it.
 
@@ -274,10 +278,9 @@ A sent mail appears at the top of Mailbox with a 10-second countdown, during whi
 ## Help & troubleshooting
 
 - `homer --help` and `homer <command> --help` show all options.
-- `AADSTS65002` on an IITP account means the `scope` line is missing from your config.
 - An `AADSTS...` error or "Need admin approval" at sign-in means your organisation hasn't approved the app. See Option B.
 - `graph 403` means the token doesn't have mail permissions. Check the app's API permissions or set `scope` as shown above, then run `homer login` again.
-- Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. homer needs an app password, created on the same account as `email`.
+- Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
 - `secret-tool not found` means libsecret isn't installed (see Requirements).
 

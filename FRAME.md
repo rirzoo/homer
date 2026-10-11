@@ -1,4 +1,4 @@
-# homer TUI wireframes
+# Homer TUI wireframes
 
 Every window the TUI can show, and why it looks the way it does. The Textual TUI in `homer/tui.py` was built from it. How the windows fit together in daily use, along with features and limits, is in [TUI.md](TUI.md).
 
@@ -16,14 +16,14 @@ How to read the wireframes:
 | D1 | Two panes by default (list and preview). The folder pane only opens with `f` and closes once you pick a folder. | Folders should only show when you want them. You use the preview on every keystroke and the folder pane now and then. | W1, W2 |
 | D2 | Other accounts are reached from the folder pane. There's no key per account. | Account and folder are one choice, so there's one place to change where you are. | W2 |
 | D3 | A list row is a conversation: a mail and all its replies. | Mailbox mixes received and sent mail, so with one row per mail your replies would sit away from what they answer. `T` switches to one row per mail if you prefer that. | W1, W5 |
-| D4 | Four fixed homer folders on every account: Mailbox, Drafts, Archive, Trash. You can add your own folders to each account, and they belong to that account. | It's the folder model you asked for. With the same four everywhere, your hands learn one layout whatever the provider calls things. | W2, W15 to W17 |
+| D4 | Four fixed Homer folders on every account: Mailbox, Drafts, Archive, Trash. You can add your own folders to each account, and they belong to that account. | It's the folder model you asked for. With the same four everywhere, your hands learn one layout whatever the provider calls things. | W2, W15 to W17 |
 | D5 | Archive is the catch-all: it shows everything from its sources that isn't already in Mailbox or one of your own folders. | Gmail's archive (All Mail) holds everything, so without this rule every conversation would show up twice. | W2, W16 |
-| D6 | Each provider folder or label feeds at most one homer folder. | A conversation then lives in exactly one place, and moving it has an obvious meaning. | W16 |
+| D6 | Each provider folder or label feeds at most one Homer folder. | A conversation then lives in exactly one place, and moving it has an obvious meaning. | W16 |
 | D7 | Homer folders are created and mapped in the TUI. Provider folders and labels are only created with the CLI (`homer mkdir`). | The split you asked for. The TUI never changes the account's own structure, so a keypress in the TUI can't rearrange the folders you see in webmail. | W15 to W17 |
 | D8 | Compose is a form: headers are typed in the TUI with autocomplete, and the body is written in `$EDITOR`. | Your call. Headers are short and autocomplete helps with them. The body is long enough to want your own editor. | W7, W8 |
 | D9 | The body is never editable in the compose window. Only `b` opens it in `$EDITOR`. | The old compose let the body be changed by accident. Now no stray key in the form can touch the text you wrote. | W7 |
 | D10 | Every mail sent or drafted from the TUI ends with "Sent with homer", with the word homer linking to https://github.com/rirzoo/homer. It's shown locked in the form and you can't edit or remove it. | You asked for it on every mail, with no exceptions. The footer isn't in the editor buffer, so nothing you do there can delete it. | W7 |
-| D11 | Mail from the TUI goes out as HTML plus a plain-text copy. The body you type is plain text, and homer turns it into simple HTML (paragraphs, links). | The footer needs a real link on the word "homer", and that takes HTML. The plain-text copy spells the link out for mail apps that don't show HTML. | W7 |
+| D11 | Mail from the TUI goes out as HTML plus a plain-text copy. The body you type is plain text, and Homer turns it into simple HTML (paragraphs, links). | The footer needs a real link on the word "Homer", and that takes HTML. The plain-text copy spells the link out for mail apps that don't show HTML. | W7 |
 | D12 | Sending puts the mail in the list right away as its own row, with a visible state: waiting, sending, sent or failed. The status line names the subject and the recipient. | With the old TUI you couldn't tell whether a mail had gone out, because the only sign was a footer that showed its `To:`. Now the state sits on the mail's own row. | W10 |
 | D13 | Sending waits 10 seconds, and `u` cancels it during that time and reopens the mail. | It replaces the "are you sure" prompt with a window in which you can still take the mail back. | W10 |
 | D14 | Leaving compose saves to Drafts. It never throws away what you wrote. Discarding takes its own key and can be undone. | Losing written mail is the worst outcome, and saving costs nothing. | W7, W11 |
@@ -31,7 +31,7 @@ How to read the wireframes:
 | D16 | Undo (`u`) instead of confirmation prompts for archive, delete, move and mark. | Prompts get answered on autopilot, while undo catches the real mistakes. | W1, W19 |
 | D17 | Two bottom lines: a status line (what just happened) above a hint line (what you can press). | In the old TUI a status message overwrote the hints, so you lost one or the other. | all |
 | D18 | Previewing a conversation for 2 seconds, or opening it, marks it read. Moving past it quickly doesn't. | Moving down the list shouldn't mark everything read, but reading in the preview counts as reading. | W1 |
-| D19 | One search syntax (`from:` `to:` `subject:` `is:unread` `has:attachment` `before:` `after:` plus free words), which homer translates for each provider. | Without it you'd need IMAP syntax for Gmail and KQL for Outlook. | W13 |
+| D19 | One search syntax (`from:` `to:` `subject:` `is:unread` `has:attachment` `before:` `after:` plus free words), which Homer translates for each provider. | Without it you'd need IMAP syntax for Gmail and KQL for Outlook. | W13 |
 | D20 | Below 100 columns the layout falls back to one pane at a time. | Two readable panes need about 100 columns, and squeezing them below that helps neither. | W21 |
 | D21 | Colour is never the only signal. Every colour has a glyph or a word next to it, and `NO_COLOR` is respected. | Colour can be off in some terminals, and some people can't tell certain colours apart. | all |
 
@@ -48,7 +48,7 @@ How to read the wireframes:
  c new  r reply  e archive  d delete  f folders  / search  ? help                            ← hints
 ```
 
-- The header shows where you are on the left (homer · account · folder, plus the search if one is active), and the unread count and sync state on the right. The sync state is one of `synced 2m ago`, `syncing…`, `offline` or `gmail: sign in again (homer login -a gmail)`.
+- The header shows where you are on the left (Homer · account · folder, plus the search if one is active), and the unread count and sync state on the right. The sync state is one of `synced 2m ago`, `syncing…`, `offline` or `gmail: sign in again (homer login -a gmail)`.
 - The status line shows the result of the last thing you did, named by subject and recipient, and how to undo it. Errors are red and start with `!`. The line stays until your next action.
 - The hint line shows the 6 to 8 most useful keys for the window you're in, and `?` shows the rest.
 
@@ -128,7 +128,7 @@ Why:
  Enter open  n new folder  E edit mapping  R rename  D delete folder  f/Esc close
 ```
 
-What it's for: changing folder or account, and managing homer folders.
+What it's for: changing folder or account, and managing Homer folders.
 
 Behaviour:
 - `f` opens the pane with the focus on it, and the cursor starts on the folder you're in. `f` or `Esc` closes it without changing anything.
@@ -142,7 +142,7 @@ Folder keys: `n` new folder (W15) · `E` edit what feeds the folder (W16; Mailbo
 Why:
 - Accounts sit inside the same tree as folders, so switching account is the same move as switching folder (D2). There's no separate account key to remember.
 - Only one account is expanded at a time to keep the pane short, and because you work in one account at a time.
-- Drafts and Trash can't be remapped. homer finds them itself, and getting them wrong would hide drafts or lose deleted mail.
+- Drafts and Trash can't be remapped. Homer finds them itself, and getting them wrong would hide drafts or lose deleted mail.
 
 ## W3 · Loading and empty states
 
@@ -410,7 +410,7 @@ The same as W1. `Enter` on a draft opens it in compose (W7 or W9) instead of the
   To (no one yet)    Notes for Monday     Fri │
 ```
 
-Drafts made elsewhere (webmail, `homer send --draft`) open in the same way. If the body is HTML, homer shows it as text in the editor and says so on the status line, since the original formatting won't survive the edit.
+Drafts made elsewhere (webmail, `homer send --draft`) open in the same way. If the body is HTML, Homer shows it as text in the editor and says so on the status line, since the original formatting won't survive the edit.
 
 ## W13 · Search (`/`)
 
@@ -456,13 +456,13 @@ Why: one syntax across Gmail and Outlook (D19), and the filters are listed under
                 └────────────────────────────────────────┘
 ```
 
-- Only the homer folders of the current account are listed (folders don't cross accounts).
+- Only the Homer folders of the current account are listed (folders don't cross accounts).
 - Typing filters the list, so `tra` then `Enter` is enough.
 - The status line then says `Moved "Leave form" to Travels · u undo`.
 
 Why: a small box over the list instead of a full screen, so you still see what you're moving.
 
-## W15 · New homer folder (`n` in the folder pane)
+## W15 · New Homer folder (`n` in the folder pane)
 
 ```
                 ┌ New folder in gmail ───────────────────┐
@@ -476,9 +476,9 @@ Why: a small box over the list instead of a full screen, so you still see what y
 `Enter` goes straight to W16 for the new folder. A folder needs at least one source, so cancelling out of W16 doesn't create it.
 
 - The name must be unique within the account and can't be Mailbox, Drafts, Archive or Trash.
-- The folder exists only in homer. Nothing is created on the server (D7).
+- The folder exists only in Homer. Nothing is created on the server (D7).
 
-## W16 · Edit what feeds a homer folder (`E`)
+## W16 · Edit what feeds a Homer folder (`E`)
 
 ```
  homer · gmail · folders › Travels
@@ -502,7 +502,7 @@ Why: a small box over the list instead of a full screen, so you still see what y
  space pick  t make it where moves go  Enter save  Esc cancel
 ```
 
-- Folders and labels already feeding another homer folder are greyed out with `[·]` and show where they are (D6). To move one, remove it from that folder first.
+- Folders and labels already feeding another Homer folder are greyed out with `[·]` and show where they are (D6). To move one, remove it from that folder first.
 - `◆` marks the folder that moves land in. It defaults to the first one you pick.
 - On Mailbox, the defaults are INBOX and Sent (Gmail: `INBOX`, `[Gmail]/Sent Mail`; Outlook: `inbox`, `sentitems`). Moves to Mailbox go to INBOX.
 - On Archive, the defaults are `[Gmail]/All Mail` and Outlook's `archive`. Archive is the catch-all (D5), so it only shows conversations that aren't in Mailbox or your own folders.
@@ -510,7 +510,7 @@ Why: a small box over the list instead of a full screen, so you still see what y
 
 Why: one screen covers both what goes into Mailbox and Archive and the mapping for your own folders. The CLI hint is there because the TUI deliberately can't create labels (D7).
 
-## W17 · Delete a homer folder (`D` in the folder pane)
+## W17 · Delete a Homer folder (`D` in the folder pane)
 
 ```
                 ┌ Delete folder "Travels"? ──────────────────────────────┐

@@ -27,8 +27,8 @@ Forwards work the same way: the footer ends your note and the forwarded message 
 
 Logged 2026-10-11. Status: accepted for now.
 
-Mailbox is your inbox and your sent mail together. Archiving from homer moves every mail in the conversation, your sent copies included, out of both, so the conversation leaves Mailbox. Gmail's own archive button only takes the Inbox label off. Your sent copies keep the Sent label, so a conversation you archived in webmail, and replied to at some point, still shows in homer's Mailbox through those copies.
+Mailbox is your inbox and your sent mail together. Archiving from Homer moves every mail in the conversation, your sent copies included, out of both, so the conversation leaves Mailbox. Gmail's own archive button only takes the Inbox label off. Your sent copies keep the Sent label, so a conversation you archived in webmail, and replied to at some point, still shows in Homer's Mailbox through those copies.
 
-Workaround: archive it once from homer (`e`).
+Workaround: archive it once from Homer (`e`).
 
 To change it: Mailbox could hide sent-only conversations whose received mails are all archived. That needs the whole thread's labels, one more server call per sync.

@@ -1,4 +1,4 @@
-# homer TUI: how it's meant to work
+# Homer TUI: how it's meant to work
 
 This is the design of `homer tui`, which is also what `homer` opens with no command. The wireframe of each window, with the reasoning behind each choice, is in [FRAME.md](FRAME.md), and this file cites its decisions as D1 to D21 and its windows as W1 to W21.
 
@@ -18,7 +18,7 @@ The TUI is for reading and handling your own mail by keyboard. The CLI stays the
 
 ## The folder model
 
-Every account shows the same four homer folders, plus any you add (D4):
+Every account shows the same four Homer folders, plus any you add (D4):
 
 | Folder | What it shows | Where moves into it go | Can be remapped |
 |---|---|---|---|
@@ -38,18 +38,18 @@ Default mapping for a new account:
 | Trash | `[Gmail]/Trash` or `[Gmail]/Bin` | `deleteditems` |
 
 Rules:
-- Each folder or label on the server feeds at most one homer folder (D6).
+- Each folder or label on the server feeds at most one Homer folder (D6).
 - Your folders belong to one account. inst can have a Travels folder and gmail can have a different Travels folder, or none.
 - Archiving a conversation moves every mail in it out of Mailbox, your own sent copies included, into Archive's target. On Gmail this takes the Sent label off your copies, so they leave Sent in Gmail's web view too and stay in All Mail (tested over IMAP on 2026-10-11: `UID MOVE` from `[Gmail]/Sent Mail` to `[Gmail]/All Mail` removes the Sent label). On Outlook they move from Sent Items to Archive (tested over Graph on 2026-10-11: a move from `sentitems` to `archive` takes the item out of Sent Items).
-- When a conversation's mails sit in sources of several homer folders (possible with Gmail labels), it's shown in the first match: Mailbox, then your folders in the order the folder pane lists them, then Archive.
-- Server folders and labels that don't feed any homer folder (Spam, for example) don't appear in the TUI. Map them into one of your folders if you want them there.
-- The mapping lives in `~/.config/homer/folders.toml`, which the TUI writes (one table per account, the move target listed first). It's kept apart from `accounts.toml` so homer never rewrites the file you edit by hand. The CLI keeps using the server's folder names (`-f "[Gmail]/Sent Mail"`) and ignores homer folders.
+- When a conversation's mails sit in sources of several Homer folders (possible with Gmail labels), it's shown in the first match: Mailbox, then your folders in the order the folder pane lists them, then Archive.
+- Server folders and labels that don't feed any Homer folder (Spam, for example) don't appear in the TUI. Map them into one of your folders if you want them there.
+- The mapping lives in `~/.config/homer/folders.toml`, which the TUI writes (one table per account, the move target listed first). It's kept apart from `accounts.toml` so Homer never rewrites the file you edit by hand. The CLI keeps using the server's folder names (`-f "[Gmail]/Sent Mail"`) and ignores Homer folders.
 
 What the TUI can and can't change:
 
 | Change | TUI | CLI |
 |---|---|---|
-| Create, rename or delete a homer folder | yes (W15, W17) | no |
+| Create, rename or delete a Homer folder | yes (W15, W17) | no |
 | Choose what feeds Mailbox, Archive or your folders | yes (W16) | no |
 | Create a folder or label on the server | no | `homer mkdir` |
 | Rename or delete a folder or label on the server | no | no (use webmail) |
@@ -59,13 +59,13 @@ What the TUI can and can't change:
 - Compose is a form (W7). The `From`, `To`, `Cc`, `Bcc` and `Subject` fields are typed in the TUI, and the body is written in `$VISUAL`, falling back to `$EDITOR` and then `vi`. Addresses autocomplete from people you've exchanged mail with on that account (W8).
 - The body is read-only in the form, and only `b` reopens it in the editor (D9).
 - The form has a field mode, where typing fills in the field, and a command mode behind `Esc` with single-key commands (`s` send, `b` body, `a` attach, `d` draft, `q` close, `D` discard). `ctrl-s` sends from either mode.
-- Before sending, homer checks that there's at least one recipient, every address looks valid, every attachment still exists, the body isn't empty (a forward may have none), and on Outlook the total is 4 MB or less. A missing subject asks once.
-- A mail being sent gets its own row in Mailbox (W10), or joins its conversation for a reply, with `↑ 10s` counting down, then `↑` sending, `✓` sent or `!` failed. The status line says `✓ Sent "‹subject›" to ‹name›`. A failed mail stays in the list with `!` and reopens on `Enter`. If you quit with it still unsent, homer saves it to Drafts (D12, D13).
+- Before sending, Homer checks that there's at least one recipient, every address looks valid, every attachment still exists, the body isn't empty (a forward may have none), and on Outlook the total is 4 MB or less. A missing subject asks once.
+- A mail being sent gets its own row in Mailbox (W10), or joins its conversation for a reply, with `↑ 10s` counting down, then `↑` sending, `✓` sent or `!` failed. The status line says `✓ Sent "‹subject›" to ‹name›`. A failed mail stays in the list with `!` and reopens on `Enter`. If you quit with it still unsent, Homer saves it to Drafts (D12, D13).
 - `u` during the 10-second countdown cancels the send and reopens the mail.
 - Your text is kept in a file under `~/.cache/homer/drafts` from the moment you write it until it's sent or saved, so nothing you write is lost by accident. It reaches the server's Drafts folder when you close the form. `q` closes and keeps the draft, and `D` discards it to Trash with undo (D14).
 - A reply keeps the original's account, fills in the recipients and the `Re:` subject, and attaches the quoted original below your text, folded and read-only (W9).
 - Every mail sent or drafted from the TUI ends your text with "Sent with homer", where *homer* links to https://github.com/rirzoo/homer. It's shown locked in the form, isn't part of the editor text, and can't be turned off in the TUI. Reopening a draft doesn't add it twice (D10).
-- TUI mail goes out as HTML plus a plain-text copy. The body you type is plain text. homer turns blank-line paragraphs into paragraphs and bare URLs into links, and the plain-text copy spells out the footer link: `Sent with homer (https://github.com/rirzoo/homer)` (D11).
+- TUI mail goes out as HTML plus a plain-text copy. The body you type is plain text. Homer turns blank-line paragraphs into paragraphs and bare URLs into links, and the plain-text copy spells out the footer link: `Sent with homer (https://github.com/rirzoo/homer)` (D11).
 
 ## Features
 
@@ -129,7 +129,7 @@ What the TUI can and can't change:
 | `F` | forward | forward | |
 | `T` | conversations or single mails | | |
 | `+` | 50 older conversations | | |
-| `ctrl+r` | sync now (homer also syncs every 2 minutes) | | |
+| `ctrl+r` | sync now (Homer also syncs every 2 minutes) | | |
 | `?` | help | help | help |
 | `q` `Esc` | quit / clear | back | close |
 
@@ -142,7 +142,7 @@ Most of these are deliberate, and most have a way around them through the CLI or
 - No account setup in the TUI. Configure the account and run `homer login -a ACCT` (W4).
 - The TUI never changes server folders or labels. Create them with `homer mkdir`. Rename or delete them in webmail (D7).
 - Folders don't cross accounts. You can't move a mail from gmail to inst.
-- Server folders that aren't mapped are invisible, Spam included, until you map them into a homer folder.
+- Server folders that aren't mapped are invisible, Spam included, until you map them into a Homer folder.
 - No permanent delete. Trash is emptied by the provider's own rules.
 - The body is plain text. No bold, lists or inline images. Paragraphs and links are the only formatting.
 - The footer can't be removed from TUI mail. `homer send` from the CLI sends without it.
@@ -154,7 +154,7 @@ Most of these are deliberate, and most have a way around them through the CLI or
 - There's no mouse support, no desktop notifications and no replying to calendar invites. New mail shows in the header only while the TUI is open.
 - Outlook's 4 MB limit per mail still applies. The form shows the running total.
 - A conversation shows the mails in that folder's sources. In Mailbox you see the inbox and sent mails of a thread, not older ones already archived.
-- Gmail conversations archived in webmail can come back to Mailbox. Webmail leaves your sent copies in Sent, and Mailbox includes Sent. Archive them once from homer, which moves the sent copies too. See ISSUES.md I2.
+- Gmail conversations archived in webmail can come back to Mailbox. Webmail leaves your sent copies in Sent, and Mailbox includes Sent. Archive them once from Homer, which moves the sent copies too. See ISSUES.md I2.
 - Results from an all-folders search can't be archived when they already sit in Archive's folder (on Gmail every mail is in All Mail). Search the folder itself to act on them.
 - Links and attachments open with `xdg-open`, so that part is Linux only, like the keyring.
 - Address suggestions are ranked by how often you've mailed someone on that account, not by how recently.
