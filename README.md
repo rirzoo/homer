@@ -159,7 +159,7 @@ homer folders -a ACCT                            list folders
 homer list    [-a ACCT] [-f FOLDER] [-n 20] [--unread] [--search QUERY]
 homer read    ID [-a ACCT] [-f FOLDER] [--save DIR]
 homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html]
-homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft]
+homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html]
 homer mkdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
@@ -171,7 +171,7 @@ homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
 
 ### HTML mail
 
-Add `--html` to `send` when you want formatting or real links. Write the body as an HTML fragment; it doesn't need `<html>` or `<body>` tags. A quoted heredoc keeps quotes and `$` signs intact:
+Add `--html` to `send` or `reply` when you want formatting or real links. Write the body as an HTML fragment; it doesn't need `<html>` or `<body>` tags. A quoted heredoc keeps quotes and `$` signs intact:
 
 ```sh
 homer send --to friend@example.com -s "Notes" --html <<'EOF'
@@ -181,6 +181,8 @@ EOF
 ```
 
 homer also includes a plain-text version of the body for mail apps that don't show HTML. That version keeps the link text but drops the URL, so write out any address people need to see.
+
+A reply with `--html` quotes the original under your text, as HTML if the original was HTML and as text if it wasn't. Images embedded in the original don't show up in the quote.
 
 Provider differences:
 

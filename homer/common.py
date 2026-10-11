@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tomllib
 from email.message import EmailMessage
+from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -114,7 +115,7 @@ def save_attachments(parts, directory):
     return saved
 
 
-def build_message(acct, to, cc, bcc, subject, body, attach, html=False):
+def build_message(acct, to, cc, bcc, subject, body, attach, html=False, plain=None):
     msg = EmailMessage()
     msg["From"] = acct["email"]
     msg["To"] = ", ".join(to)
@@ -125,7 +126,8 @@ def build_message(acct, to, cc, bcc, subject, body, attach, html=False):
     msg["Subject"] = subject
     msg["Date"] = email.utils.formatdate(localtime=True)
     msg["Message-ID"] = email.utils.make_msgid(domain=acct["email"].rpartition("@")[2])
-    msg.set_content(html_to_text(body) if html else body)  # ponytail: plain fallback drops link URLs
+    # plain: hand-made text copy for HTML mail; otherwise derived. ponytail: derived copy drops link URLs
+    msg.set_content((plain or html_to_text(body)) if html else body)
     if html:
         msg.add_alternative(body, subtype="html")
     for f in attach:
@@ -139,7 +141,16 @@ def _addrs(*headers):
     return [a for h in headers if h is not None for a in h.addresses]
 
 
-def build_reply(acct, orig, body, reply_all=False, attach=()):
+def _quote_html(msg):
+    part = msg.get_body(("html",))
+    if part is None:
+        return escape(body_text(msg)).replace("\n", "<br>\n")
+    page = part_text(part)
+    inner = re.search(r"<body[^>]*>(.*)</body>", page, re.S | re.I)
+    return inner.group(1) if inner else page  # ponytail: cid: inline images in the quote won't show
+
+
+def build_reply(acct, orig, body, reply_all=False, attach=(), html=False):
     """Reply to `orig` (a parsed message): quotes it and sets the threading headers."""
     me = acct["email"].lower()
     seen, to, cc = {me}, [], []
@@ -154,9 +165,15 @@ def build_reply(acct, orig, body, reply_all=False, attach=()):
     subject = orig["Subject"] or ""
     if not subject.lower().startswith("re:"):
         subject = f"Re: {subject}".rstrip()
+    said = f"On {orig['Date']}, {orig['From']} wrote:"
     quoted = "\n".join("> " + line if line else ">" for line in body_text(orig).splitlines())
-    text = f"{body.rstrip()}\n\nOn {orig['Date']}, {orig['From']} wrote:\n{quoted}\n"
-    msg = build_message(acct, to, cc, [], subject, text, attach)
+    text = f"{(html_to_text(body) if html else body).rstrip()}\n\n{said}\n{quoted}\n"
+    if html:  # HTML part quotes the original's HTML; the plain copy keeps "> " quoting
+        page = (f'{body}\n<p>{escape(said)}</p>\n<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;'
+                f'padding-left:1ex">{_quote_html(orig)}</blockquote>')
+        msg = build_message(acct, to, cc, [], subject, page, attach, html=True, plain=text)
+    else:
+        msg = build_message(acct, to, cc, [], subject, text, attach)
     if orig["Message-ID"]:
         msg["In-Reply-To"] = orig["Message-ID"]
         msg["References"] = " ".join(filter(None, [orig["References"], orig["Message-ID"]]))

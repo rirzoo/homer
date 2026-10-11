@@ -60,3 +60,18 @@ mine = email.message_from_bytes(b"From: me@example.com\r\nTo: bob@x.com\r\nSubje
 rm = homer.build_reply({"email": "me@example.com"}, mine, "again")
 assert (rm["To"], rm["Subject"]) == ("bob@x.com", "Re: Plans")  # follow-up to own mail goes to its recipients
 print("reply ok")
+
+# HTML reply: HTML part quotes the original's HTML body, plain copy keeps "> " quoting
+horig = email.message_from_bytes(
+    b"From: Bob <bob@x.com>\r\nTo: me@example.com\r\nSubject: Hi\r\nMessage-ID: <h1@x.com>\r\n"
+    b"Content-Type: text/html\r\n\r\n<html><head><style>p{}</style></head><body><p>See <b>you</b></p></body></html>\r\n",
+    policy=email.policy.default)
+hr = homer.build_reply({"email": "me@example.com"}, horig, '<p>Sure, <a href="https://x.com">here</a></p>', html=True)
+page = hr.get_body(("html",)).get_content()
+assert '<a href="https://x.com">here</a>' in page and "<blockquote" in page and "<p>See <b>you</b></p>" in page
+assert "<style>" not in page  # only the original's <body> is quoted
+assert hr.get_body(("plain",)).get_content().startswith("Sure, here\n\nOn ") and "> See you" in hr.get_body(("plain",)).get_content()
+assert hr["In-Reply-To"] == "<h1@x.com>"
+pr = homer.build_reply({"email": "me@example.com"}, orig, "<p>ok</p>", html=True)  # plain-text original
+assert "See you" in pr.get_body(("html",)).get_content()
+print("html reply ok")

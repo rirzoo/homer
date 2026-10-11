@@ -91,7 +91,7 @@ def cmd_reply(a, cfg):
         die("give -b BODY or pipe the body on stdin")
     body = a.body if a.body is not None else sys.stdin.read()
     orig = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
-    msg = build_reply(acct, orig, body, a.all, a.attach)
+    msg = build_reply(acct, orig, body, a.all, a.attach, a.html)
     rcpts = [ad.addr_spec for h in ("To", "Cc") if msg[h] for ad in msg[h].addresses]
     if a.draft:
         backend.save_draft(name, acct, msg)
@@ -162,6 +162,7 @@ def main():
     p.add_argument("--all", action="store_true", help="reply to everyone on the original, not just the sender")
     p.add_argument("--attach", action="append", default=[], metavar="FILE")
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.add_argument("--html", action="store_true", help="reply text is HTML (a plain-text copy is added)")
     p.set_defaults(fn=cmd_reply)
 
     p = sub.add_parser("mkdir", parents=[common], help="create a folder (Gmail: a label)")
