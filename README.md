@@ -15,7 +15,7 @@ You can list, search and read mail, save attachments, send mail with attachments
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
-For going through mail yourself there's `homer tui`, a full-screen interface you drive from the keyboard. It's the one part of homer where opening a message marks it read, the way a normal mail app does.
+For going through mail yourself, run `homer` on its own to get a full-screen interface you drive from the keyboard. It's the one part of homer where opening a message marks it read, the way a normal mail app does.
 
 homer uses only the Python standard library. Passwords and tokens are stored in your system keyring, not in files.
 
@@ -184,7 +184,7 @@ homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--
 homer mkdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
-homer tui     [-a ACCT]                          browse and manage mail interactively
+homer         [-a ACCT]                          open the TUI (same as homer tui)
 ```
 
 `--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
@@ -220,7 +220,7 @@ Outlook numbers are reassigned on every `list`, so run `list` on the folder righ
 
 ## TUI
 
-`homer tui` opens your default account's inbox; `homer tui -a inst` opens another account. It shows the newest 50 messages, with unread ones in bold and marked `*`. `Enter` opens a message and marks it read, `q` takes you back, and `?` shows every key.
+`homer` opens your default account's inbox and `homer -a inst` opens another account. `homer tui` does the same thing. It shows the newest 50 messages, with unread ones in bold and marked `*`. `Enter` opens a message and marks it read, `q` takes you back, and `?` shows every key.
 
 | Key | In the list | In a message |
 |---|---|---|

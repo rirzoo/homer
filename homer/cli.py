@@ -187,7 +187,10 @@ def main():
     p.add_argument("ids", nargs="+", help=id_help)
     p.set_defaults(fn=cmd_mark)
 
-    a = ap.parse_args()
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-a", "--account") or argv[0].startswith("--account="):
+        argv = ["tui", *argv]  # bare `homer` (or `homer -a inst`) opens the TUI
+    a = ap.parse_args(argv)
     try:
         a.fn(a, load_config())
     except (imaplib.IMAP4.error, smtplib.SMTPException, OSError, subprocess.CalledProcessError) as e:
