@@ -14,21 +14,23 @@ from pathlib import Path
 
 from . import outlook
 from .cli import BACKENDS
-from .common import attachments, body_text, build_message, build_reply, die, get_account, save_attachments
+from .common import attachments, body_text, build_forward, build_message, build_reply, die, get_account, save_attachments
 
 # die() raises SystemExit; the rest are what cli.main catches
 ERRORS = (SystemExit, imaplib.IMAP4.error, smtplib.SMTPException, OSError, subprocess.CalledProcessError)
 DOWNLOADS = Path("~/Downloads").expanduser()
 COMPOSE = "To: \nCc: \nBcc: \nSubject: \nAttach: \n\n"
 REPLY = "Attach: \n\n"  # recipients and subject come from the original
-LIST_KEYS = "Enter open  c compose  r reply  d delete  f folder  a account  / search  ? help  q quit"
-MSG_KEYS = "j/k space scroll  s save attachments  r reply  R reply all  m unread  d delete  M move  q back"
+FORWARD = "To: \nCc: \nBcc: \nAttach: \n\n"  # the note below is optional
+LIST_KEYS = "Enter open  c compose  r reply  F forward  d delete  f folder  a account  / search  ? help  q quit"
+MSG_KEYS = "j/k space scroll  s save attachments  r reply  R reply all  F forward  m unread  d delete  M move  q back"
 HELP = """\
 Message list
   j / k, arrows      move            PgUp / PgDn   page
   Enter              open (marks it read)
   c                  compose a new mail in $EDITOR
   r / R              reply / reply to all
+  F                  forward (with its attachments)
   m                  toggle read / unread
   d                  delete (move to trash)
   M                  move to a folder
@@ -41,7 +43,7 @@ Message list
 Message view
   j / k, space / b   scroll
   s                  save attachments to ~/Downloads
-  r R m d M          as in the list
+  r R F m d M        as in the list
   q                  back to the list
 
 Composing
@@ -192,8 +194,8 @@ class App:
     def act(self, k, msg=None):
         """Actions shared by the list and the message view. Returns True if the row went away."""
         row = self.rows[self.cur]
-        if k in "rR":
-            self.compose(msg or self.fetch(row), k == "R")
+        if k in "rRF":
+            self.compose(msg or self.fetch(row), k)
         elif k == "m":
             self.call(self.backend.mark, self.folder, [row[0]], row[1])
             row[1] = not row[1]
@@ -231,8 +233,8 @@ class App:
             self.status = ""
             if k == "s" and parts:
                 self.status = "saved " + ", ".join(p.name for p in save_attachments(parts, DOWNLOADS))
-            elif k in ("r", "R", "m", "d", "M"):
-                if self.act(k, msg) or k in "rR":
+            elif k in ("r", "R", "F", "m", "d", "M"):
+                if self.act(k, msg) or k in "rRF":
                     return
             elif k not in ("s", "KEY_RESIZE"):
                 return
@@ -245,24 +247,27 @@ class App:
         curses.reset_prog_mode()
         self.scr.refresh()
 
-    def compose(self, orig=None, reply_all=False):
+    def compose(self, orig=None, how="r"):
+        """how: r reply, R reply all, F forward; ignored without orig."""
+        fwd = orig is not None and how == "F"
         fd, path = tempfile.mkstemp(prefix="homer-", suffix=".txt")
-        os.write(fd, (REPLY if orig else COMPOSE).encode())
+        os.write(fd, (FORWARD if fwd else REPLY if orig else COMPOSE).encode())
         os.close(fd)
         while True:
             self.edit(path)
             d = parse_draft(Path(path).read_text())
-            if not d["body"].strip():
+            if not d["body"].strip() and not (fwd and d["to"]):  # a forward may go without a note
                 os.unlink(path)
                 self.status = "empty body, discarded"
                 return
             missing = [f for f in d["attach"] if not Path(f).is_file()]
             problem = (f"attachment not found: {', '.join(missing)}" if missing
-                       else "no To: address" if not orig and not d["to"] else "")
+                       else "no To: address" if (fwd or not orig) and not d["to"] else "")
             if problem:
                 choice = self.key(f"{problem}   e edit  q discard")
             else:
-                msg = (build_reply(self.acct, orig, d["body"], reply_all, d["attach"]) if orig else
+                msg = (build_forward(self.acct, orig, d["to"], d["cc"], d["bcc"], d["body"], d["attach"]) if fwd else
+                       build_reply(self.acct, orig, d["body"], how == "R", d["attach"]) if orig else
                        build_message(self.acct, d["to"], d["cc"], d["bcc"], d["subject"], d["body"], d["attach"]))
                 choice = self.key(f"to {msg['To']}: y send  d draft  e edit  q discard")
             if choice == "q":
@@ -315,7 +320,7 @@ class App:
                 self.reload()
         elif k == "?":
             self.page("help", HELP.splitlines(), "any key: back")
-        elif k in ("r", "R", "m", "d", "M") and self.rows:
+        elif k in ("r", "R", "F", "m", "d", "M") and self.rows:
             self.act(k)
 
     def loop(self):

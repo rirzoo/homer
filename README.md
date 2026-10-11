@@ -11,7 +11,7 @@ $ homer read -a inst 2 --save ~/Downloads
 $ homer send -a gmail --to prof@uni.edu -s "Assignment 3" -b "Please find it attached." --attach a3.pdf
 ```
 
-You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, save drafts, create folders, move messages and mark them read or unread. All your accounts sit side by side and you pick one with `-a`.
+You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create folders, move messages and mark them read or unread. All your accounts sit side by side and you pick one with `-a`.
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
@@ -181,6 +181,7 @@ homer list    [-a ACCT] [-f FOLDER] [-n 20] [--unread] [--search QUERY]
 homer read    ID [-a ACCT] [-f FOLDER] [--save DIR]
 homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html]
 homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html]
+homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NOTE] [--attach FILE ...] [--draft] [--html] [--attached]
 homer mkdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
@@ -191,9 +192,13 @@ homer         [-a ACCT]                          open the TUI (same as homer tui
 
 `reply` answers the sender of message `ID` (add `--all` to include everyone else on it). It adds "Re:" to the subject, quotes the original under your text, and sets the headers mail apps use to keep the reply in the same conversation. Replying to a message you sent yourself goes to its original recipients, which is handy for a follow-up.
 
+`forward` sends message `ID` to the `--to` addresses (and any `--cc`/`--bcc`), attachments included. The subject gets "Fwd:", and the original's From, Date, Subject, To and Cc lines sit above its text. Put a note on top with `-b` or on stdin, or leave it out: `homer forward 4321 --to friend@example.com`.
+
+With `--attached` the original goes along as an `.eml` file instead, with its headers, formatting, images and attachments as they were, and your note is the whole body. Use it when the recipient needs the message exactly as you got it.
+
 ### HTML mail
 
-Add `--html` to `send` or `reply` when you want formatting or real links. Write the body as an HTML fragment; it doesn't need `<html>` or `<body>` tags. A quoted heredoc keeps quotes and `$` signs intact:
+Add `--html` to `send`, `reply` or `forward` when you want formatting or real links. Write the body as an HTML fragment; it doesn't need `<html>` or `<body>` tags. A quoted heredoc keeps quotes and `$` signs intact:
 
 ```sh
 homer send --to friend@example.com -s "Notes" --html <<'EOF'
@@ -204,7 +209,7 @@ EOF
 
 homer also includes a plain-text version of the body for mail apps that don't show HTML. That version keeps the link text but drops the URL, so write out any address people need to see.
 
-A reply with `--html` quotes the original under your text, as HTML if the original was HTML and as text if it wasn't. Images embedded in the original don't show up in the quote.
+A reply or forward with `--html` quotes the original under your text, as HTML if the original was HTML and as text if it wasn't. Images embedded in an HTML original stay in place in the quote. Without `--html`, a forward sends those images as ordinary attachments.
 
 Provider differences:
 
@@ -228,6 +233,7 @@ Outlook numbers are reassigned on every `list`, so run `list` on the folder righ
 | `Enter` | open the message | |
 | `c` | write a new mail | |
 | `r` / `R` | reply / reply to all | same |
+| `F` | forward, attachments included | same |
 | `m` | toggle read and unread | same |
 | `d` | delete: asks first, then moves it to the trash | same |
 | `M` | move to a folder | same |
@@ -237,7 +243,7 @@ Outlook numbers are reassigned on every `list`, so run `list` on the folder righ
 | `g` / `+` | refresh / load 50 older messages | |
 | `q` | quit | back to the list |
 
-You write mail in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`). For a new mail the file starts with `To:`, `Cc:`, `Bcc:`, `Subject:` and `Attach:` lines. Fill them in, leave a blank line and write the body below it, separating several addresses or attachment paths with commas. A reply only has the `Attach:` line, because the recipients, subject and quote come from the original. After you save and quit, homer asks: `y` sends, `d` saves a draft, `e` reopens the editor and `q` throws it away. An empty body also throws it away. If sending fails, your text stays in a file and homer shows you where.
+You write mail in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`). For a new mail the file starts with `To:`, `Cc:`, `Bcc:`, `Subject:` and `Attach:` lines. Fill them in, leave a blank line and write the body below it, separating several addresses or attachment paths with commas. A reply only has the `Attach:` line, because the recipients, subject and quote come from the original. A forward has `To:`, `Cc:`, `Bcc:` and `Attach:`, and the note under them is optional. After you save and quit, homer asks: `y` sends, `d` saves a draft, `e` reopens the editor and `q` throws it away. An empty body also throws it away, except on a forward, where an empty `To:` does. If sending fails, your text stays in a file and homer shows you where.
 
 Mail from the TUI goes out as plain text. Every action is a round trip to the server, so the screen pauses for a second or so while it works. On Outlook accounts the TUI holds on to the full message ids, so an agent running `homer list` at the same time can't make your keypress land on a different message.
 

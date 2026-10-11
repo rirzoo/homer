@@ -147,7 +147,22 @@ def _quote_html(msg):
         return escape(body_text(msg)).replace("\n", "<br>\n")
     page = part_text(part)
     inner = re.search(r"<body[^>]*>(.*)</body>", page, re.S | re.I)
-    return inner.group(1) if inner else page  # ponytail: cid: inline images in the quote won't show
+    return inner.group(1) if inner else page
+
+
+def _cid_images(orig):
+    """Images the original's HTML shows via cid: links."""
+    if orig.get_body(("html",)) is None:
+        return []
+    return [p for p in orig.walk() if p["Content-ID"] and p.get_content_maintype() == "image"]
+
+
+def _keep_images(msg, images):
+    """Put `images` next to msg's HTML part (multipart/related) so the quoted cid: links still resolve."""
+    page = msg.get_body(("html",))
+    for p in images:
+        page.add_related(p.get_payload(decode=True) or b"", *p.get_content_type().split("/", 1),
+                         cid=p["Content-ID"], disposition="inline", filename=p.get_filename())
 
 
 def build_reply(acct, orig, body, reply_all=False, attach=(), html=False):
@@ -172,9 +187,41 @@ def build_reply(acct, orig, body, reply_all=False, attach=(), html=False):
         page = (f'{body}\n<p>{escape(said)}</p>\n<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;'
                 f'padding-left:1ex">{_quote_html(orig)}</blockquote>')
         msg = build_message(acct, to, cc, [], subject, page, attach, html=True, plain=text)
+        _keep_images(msg, _cid_images(orig))
     else:
         msg = build_message(acct, to, cc, [], subject, text, attach)
     if orig["Message-ID"]:
         msg["In-Reply-To"] = orig["Message-ID"]
         msg["References"] = " ".join(filter(None, [orig["References"], orig["Message-ID"]]))
+    return msg
+
+
+def build_forward(acct, orig, to, cc, bcc, body="", attach=(), html=False, attached=False):
+    """Forward `orig` inline (your note, its headers, body and attachments), or with attached=True as an .eml."""
+    subject = orig["Subject"] or ""
+    if not subject.lower().startswith(("fwd:", "fw:")):
+        subject = f"Fwd: {subject}".rstrip()
+    if attached:  # the whole original rides along: headers, HTML, images, attachments
+        msg = build_message(acct, to, cc, bcc, subject, body, attach, html)
+        name = re.sub(r'[\\/:*?"<>|\s]+', " ", orig["Subject"] or "").strip() or "message"
+        msg.add_attachment(orig, filename=f"{name}.eml")
+        return msg
+    head = [f"{h}: {orig[h]}" for h in ("From", "Date", "Subject", "To", "Cc") if orig[h]]
+    note = (html_to_text(body) if html else body).rstrip()
+    text = f"{note}\n\n---------- Forwarded message ---------\n" + "\n".join(head) + f"\n\n{body_text(orig)}\n"
+    text = text.lstrip("\n")
+    images = []
+    if html:
+        page = (f'{body}\n<p>---------- Forwarded message ---------<br>\n'
+                + "<br>\n".join(escape(h) for h in head) + f"</p>\n{_quote_html(orig)}")
+        msg = build_message(acct, to, cc, bcc, subject, page, attach, html=True, plain=text)
+        images = _cid_images(orig)
+        _keep_images(msg, images)
+    else:
+        msg = build_message(acct, to, cc, bcc, subject, text, attach)
+    for p in attachments(orig):
+        if p not in images:  # images shown inline already travel with the HTML
+            maintype, subtype = p.get_content_type().split("/", 1)
+            msg.add_attachment(p.get_payload(decode=True) or b"", maintype=maintype, subtype=subtype,
+                               filename=p.get_filename())
     return msg
