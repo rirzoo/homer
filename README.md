@@ -25,7 +25,9 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
 
 - [Requirements](#requirements)
 - [Install](#install)
-  - [Updating and removing](#updating-and-removing)
+  - [Fedora](#fedora)
+  - [Other distributions, with pipx](#other-distributions-with-pipx)
+  - [Updating and removing a pipx install](#updating-and-removing-a-pipx-install)
 - [Setup](#setup)
   - [Linking a Gmail account](#linking-a-gmail-account)
   - [Linking a Microsoft 365 account](#linking-a-microsoft-365-account)
@@ -49,7 +51,18 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
 
 ## Install
 
-Homer installs for your user only, into `~/.local/bin`. You don't need `sudo` for Homer itself, and since your config and keyring are per user anyway, there's no reason to install it system wide.
+### Fedora
+
+```sh
+sudo dnf copr enable rirzoo/homer
+sudo dnf install homer
+```
+
+You need Fedora 43 or newer. dnf also installs libsecret and puts `homer` in `/usr/bin`, so there's no PATH to set up. Update with `sudo dnf upgrade homer` and remove it with `sudo dnf remove homer`. Removing the package leaves your passwords and tokens in the keyring, and `secret-tool clear service homer` deletes them.
+
+### Other distributions, with pipx
+
+On other distributions, and on Fedora 42 or older, Homer installs for your user only, into `~/.local/bin`. You don't need `sudo` for Homer itself, and since your config and keyring are per user anyway, there's no reason to install it system wide.
 
 1. Install pipx, and git if you don't have it:
 
@@ -80,7 +93,7 @@ Homer installs for your user only, into `~/.local/bin`. You don't need `sudo` fo
 
 You can use pip instead of pipx: `git clone https://github.com/rirzoo/homer.git && cd homer && pip install --user .`. Newer Ubuntu and Debian releases refuse that with an `externally-managed-environment` error, so stick with pipx there. To try Homer without installing it, run `python3 -m homer ...` from the cloned folder.
 
-### Updating and removing
+### Updating and removing a pipx install
 
 ```sh
 pipx reinstall homer-mail          # get the latest version
