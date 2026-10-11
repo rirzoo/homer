@@ -296,6 +296,15 @@ Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP), `homer/out
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
 
+The Fedora package is built from `homer.spec`. Copr runs `.copr/Makefile` to make the source RPM. It packs the current commit and downloads Textual and its dependencies as wheels, because the versions in Fedora are too old for the TUI. The RPM puts all of it in `/usr/share/homer`, so it never touches your system Python packages. To build it yourself:
+
+```sh
+make -f .copr/Makefile srpm outdir=/tmp/homer-srpm
+rpmbuild --rebuild /tmp/homer-srpm/homer-*.src.rpm
+```
+
+To release a new version, bump `Version` in `homer.spec` and `pyproject.toml` together and add a `%changelog` entry. dnf only upgrades when the version or release goes up.
+
 ## License
 
 [MIT](LICENSE)
