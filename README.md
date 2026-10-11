@@ -1,6 +1,6 @@
 # homer
 
-Read, send and organise mail from several accounts in one terminal command, including **institute / work mail on Microsoft 365 (Outlook)**.
+homer is a terminal mail client for people with more than one inbox. It handles Gmail, any IMAP/SMTP server, and institute or work mail on Microsoft 365 (Outlook). It started at IIT Patna, and IITP accounts have their own setup section below.
 
 ```
 $ homer list -a inst -n 3
@@ -11,11 +11,11 @@ $ homer read -a inst 2 --save ~/Downloads
 $ homer send -a gmail --to prof@uni.edu -s "Assignment 3" -b "Please find it attached." --attach a3.pdf
 ```
 
-- **Multiple accounts:** Gmail (or any IMAP/SMTP server) and Microsoft 365 / Outlook side by side.
-- **Mail:** list, search, read (with attachments), send (with attachments), drafts, folders, move, mark read/unread.
-- **Doesn't change your unread state:** `read` never marks a message as read; only `mark` does.
-- **Agent-friendly:** plain text in and out, so AI coding agents (Claude Code etc.) can read and send mail for you through the same commands.
-- **No dependencies:** Python standard library only. Passwords and tokens live in your system keyring, never in files.
+You can list, search and read mail, save attachments, send mail with attachments, save drafts, create folders, move messages and mark them read or unread. All your accounts sit side by side and you pick one with `-a`.
+
+Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
+
+homer uses only the Python standard library. Passwords and tokens are stored in your system keyring, not in files.
 
 ## Requirements
 
@@ -53,14 +53,14 @@ Then link each account with `homer login -a <name>` (details below) and check wi
 
 ### Linking a Gmail account
 
-Gmail needs an **app password** (a 16-character password just for homer):
+Gmail needs an app password, a 16-character password that only homer uses:
 
 1. Turn on 2-Step Verification: <https://myaccount.google.com/signinoptions/twosv>
 2. Create an app password: <https://myaccount.google.com/apppasswords>
    (If it says *"The setting you are looking for is not available"*, 2-Step Verification is off, or the account uses Advanced Protection.)
 3. In a normal terminal run `homer login -a gmail` and paste it. It goes straight into your keyring.
 
-**Other IMAP/SMTP providers** (Fastmail, Zoho, a university mail server, ...) work the same way. Add the server names:
+Other IMAP/SMTP providers (Fastmail, Zoho, a university mail server) work the same way once you add the server names:
 
 ```toml
 [accounts.work]
@@ -69,18 +69,41 @@ imap = "imap.example.com"    # port 993, SSL      (imap_port to override)
 smtp = "smtp.example.com"    # port 587, STARTTLS (smtp_port to override)
 ```
 
-### Linking an institute / Microsoft 365 account
+### Linking an IIT Patna account
 
-Microsoft 365 doesn't accept passwords from third-party apps, so homer signs in with OAuth through Microsoft Graph. That needs a **client ID**, which identifies the app you sign in through:
+IITP mail runs on Microsoft 365 and only lets Microsoft's own apps sign in, so homer signs in as the Microsoft Office app using that app's public client ID. IITP's IT department has said this is fine for IITP accounts. Add this to your config, with your own address:
 
-**Option A: register your own app** (many organisations let users do this):
+```toml
+[accounts.inst]
+email = "you@iitp.ac.in"
+provider = "outlook"
+tenant = "iitp.ac.in"
+client_id = "d3590ed6-52b3-4102-aeff-aad2292ab01c"   # Microsoft Office
+scope = "https://graph.microsoft.com/.default offline_access"
+```
 
-1. Open <https://entra.microsoft.com> → *App registrations* → *New registration*. Name it `homer`, keep "Accounts in this organizational directory only", and leave Redirect URI empty.
-2. *Authentication* → *Advanced settings* → **Allow public client flows: Yes** → Save.
-3. *API permissions* → *Add a permission* → *Microsoft Graph* → *Delegated* → `Mail.ReadWrite` and `Mail.Send`.
-4. From *Overview*, copy the **Application (client) ID** into `client_id` and the **Directory (tenant) ID** (or your mail domain) into `tenant`.
+Keep the `scope` line as it is. The Office app can't ask for mail permissions one by one (Microsoft answers with `AADSTS65002`), but with `.default` it gets the mail read and send permissions it already has.
 
-**Option B: ask your IT department.** If you can't register apps, or sign-in says *"Need admin approval"*, your organisation controls which apps may access mail. Ask IT to approve your registration, or to give you a client ID they allow. Please don't work around your organisation's policy. If IT gives you a pre-approved app that only works with its preconfigured permissions, add:
+Then run `homer login -a inst`. It prints a URL and a code. Open the URL in any browser, enter the code, and sign in with your IITP account as usual, MFA included. homer stores a refresh token in your keyring and renews it on its own, so you only do this once. Check that it worked with `homer list -a inst`.
+
+This approval covers IITP only. If you're somewhere else, use the next section.
+
+### Linking another institute / Microsoft 365 account
+
+Microsoft 365 doesn't accept passwords from third-party apps, so homer signs in with OAuth through Microsoft Graph. For that you need a client ID, which tells Microsoft which app you're signing in through. There are two ways to get one.
+
+#### Option A: register your own app
+
+Many organisations let users do this.
+
+1. Open <https://entra.microsoft.com>, go to *App registrations* and click *New registration*. Name it `homer`, keep "Accounts in this organizational directory only", and leave Redirect URI empty.
+2. Under *Authentication*, open *Advanced settings*, set *Allow public client flows* to Yes, and save.
+3. Under *API permissions*, click *Add a permission*, choose *Microsoft Graph*, then *Delegated*, and add `Mail.ReadWrite` and `Mail.Send`.
+4. On the *Overview* page, copy the Application (client) ID into `client_id` and the Directory (tenant) ID into `tenant`. Your mail domain also works for `tenant`.
+
+#### Option B: ask your IT department
+
+If you can't register apps, or sign-in says *"Need admin approval"*, your organisation decides which apps can access mail. Ask IT to approve your registration or to give you a client ID they allow, and please don't try to get around their policy. Some pre-approved apps only work with their preconfigured permissions. If IT gives you one of those, add:
 
 ```toml
 scope = "https://graph.microsoft.com/.default offline_access"
@@ -114,7 +137,7 @@ Provider differences:
 
 | | Gmail / IMAP | Outlook / Microsoft 365 |
 |---|---|---|
-| Message `ID` | UID shown by `list` (stable) | `#` from your **most recent** `list` on that account (or a full Graph message id) |
+| Message `ID` | UID shown by `list` (stable) | `#` from your most recent `list` on that account (or a full Graph message id) |
 | `--search` | IMAP SEARCH: `'FROM "bob" SINCE 1-Oct-2026'` | Outlook search (KQL): `'from:bob subject:exam'` |
 | Folder names | as `homer folders` shows them, e.g. `"[Gmail]/Sent Mail"`, `"[Gmail]/Bin"` | display name, or `inbox`, `sentitems`, `drafts`, `deleteditems`, `junkemail`, `archive` |
 | Delete | `move ID --to "[Gmail]/Trash"` (`[Gmail]/Bin` in some regions) | `move ID --to deleteditems` |
@@ -125,13 +148,14 @@ Outlook numbers are reassigned on every `list`, so run `list` on the folder righ
 ## Help & troubleshooting
 
 - `homer --help` and `homer <command> --help` show all options.
-- **`AADSTS...` error, or "Need admin approval" when signing in:** your organisation hasn't approved the app. See Option B above.
-- **`graph 403`:** the token lacks mail permissions. Check the app's API permissions, or set `scope` as above, then run `homer login` again.
-- **Gmail `AUTHENTICATIONFAILED`:** use an app password, not your normal password, and make sure it was created on the same account as `email`.
-- **`password prompt needs a real terminal`:** run `homer login` in a normal terminal window, not through a tool that captures input.
-- **`secret-tool not found`:** install libsecret (see Requirements).
+- `AADSTS65002` on an IITP account means the `scope` line is missing from your config.
+- An `AADSTS...` error or "Need admin approval" at sign-in means your organisation hasn't approved the app. See Option B.
+- `graph 403` means the token doesn't have mail permissions. Check the app's API permissions or set `scope` as shown above, then run `homer login` again.
+- Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. homer needs an app password, created on the same account as `email`.
+- `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
+- `secret-tool not found` means libsecret isn't installed (see Requirements).
 
-Stuck, found a bug, or want a feature (replies, macOS keychain, ...)? **[Open an issue](https://github.com/rirzoo/homer/issues)** with the command you ran and the full error. Remove your email address and any tokens first. Pull requests are welcome.
+If you're stuck or something's broken, [open an issue](https://github.com/rirzoo/homer/issues) with the command you ran and the full error, minus your email address and any tokens. Feature requests (replies, macOS keychain support) and pull requests are welcome too.
 
 ## Development
 
