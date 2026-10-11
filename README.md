@@ -24,17 +24,50 @@ homer uses only the Python standard library. Passwords and tokens are stored in 
 
 ## Install
 
+homer installs for your user only, into `~/.local/bin`. You don't need `sudo` for homer itself, and since your config and keyring are per user anyway, there's no reason to install it system wide.
+
+1. Install pipx, and git if you don't have it:
+
+   ```sh
+   sudo dnf install pipx git        # Fedora
+   sudo apt install pipx git        # Debian / Ubuntu
+   ```
+
+2. Install homer:
+
+   ```sh
+   pipx install git+https://github.com/rirzoo/homer.git
+   ```
+
+3. Put `~/.local/bin` on your PATH, then open a new terminal:
+
+   ```sh
+   pipx ensurepath
+   ```
+
+   To do it by hand instead, add this line to `~/.bashrc` (or `~/.zshrc` if you use zsh):
+
+   ```sh
+   export PATH="$HOME/.local/bin:$PATH"
+   ```
+
+4. Run `homer --help`. If you get `command not found`, your shell hasn't picked up the new PATH yet. Open a new terminal or run `source ~/.bashrc`.
+
+You can use pip instead of pipx: `git clone https://github.com/rirzoo/homer.git && cd homer && pip install --user .`. Newer Ubuntu and Debian releases refuse that with an `externally-managed-environment` error, so stick with pipx there. To try homer without installing it, run `python3 -m homer ...` from the cloned folder.
+
+### Updating and removing
+
 ```sh
-pipx install git+https://github.com/rirzoo/homer.git
-# or
-git clone git@github.com:rirzoo/homer.git && cd homer && pip install --user .
+pipx reinstall homer-mail          # get the latest version
+pipx uninstall homer-mail          # remove homer
+secret-tool clear service homer    # delete the passwords and tokens homer stored
 ```
 
-You can also run it without installing, from the repo: `python3 -m homer ...`
+Your config in `~/.config/homer/` stays until you delete it yourself.
 
 ## Setup
 
-Accounts live in `~/.config/homer/accounts.toml` (override with `$HOMER_CONFIG`). Each account has a short name you pass with `-a`:
+homer doesn't create a config for you. Make the folder with `mkdir -p ~/.config/homer`, then create `~/.config/homer/accounts.toml` in any text editor (set `$HOMER_CONFIG` if you want it somewhere else). Each account gets a short name that you pass with `-a`:
 
 ```toml
 default = "gmail"            # used when -a is omitted
