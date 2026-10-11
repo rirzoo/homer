@@ -36,3 +36,20 @@ with tempfile.TemporaryDirectory() as tmp:
 
 assert homer.html_to_text("<style>x{}</style><p>Hi&nbsp;there</p><p>bye</p>") == "Hi there\nbye"
 print("ok")
+
+# reply: recipients, subject, quoting, threading headers
+orig = email.message_from_bytes(
+    b"From: Bob <bob@x.com>\r\nTo: me@example.com, carol@x.com\r\nCc: dave@x.com\r\nSubject: Plans\r\n"
+    b"Date: Sun, 11 Oct 2026 10:00:00 +0530\r\nMessage-ID: <m2@x.com>\r\nReferences: <m1@x.com>\r\n\r\nSee you\r\n",
+    policy=email.policy.default)
+r = homer.build_reply({"email": "Me@Example.com"}, orig, "Sure")
+assert (r["To"], r["Cc"], r["Subject"]) == ("Bob <bob@x.com>", None, "Re: Plans")
+assert r["In-Reply-To"] == "<m2@x.com>" and r["References"] == "<m1@x.com> <m2@x.com>"
+assert homer.body_text(r).startswith("Sure\n\nOn Sun, 11 Oct 2026") and "> See you" in homer.body_text(r)
+ra = homer.build_reply({"email": "me@example.com"}, orig, "Sure", reply_all=True)
+assert ra["Cc"] == "carol@x.com, dave@x.com"  # me excluded, no duplicates
+mine = email.message_from_bytes(b"From: me@example.com\r\nTo: bob@x.com\r\nSubject: Re: Plans\r\n\r\nhi\r\n",
+                                policy=email.policy.default)
+rm = homer.build_reply({"email": "me@example.com"}, mine, "again")
+assert (rm["To"], rm["Subject"]) == ("bob@x.com", "Re: Plans")  # follow-up to own mail goes to its recipients
+print("reply ok")

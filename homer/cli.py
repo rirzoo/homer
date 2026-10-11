@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 from . import gmail, outlook
-from .common import attachments, body_text, build_message, die, get_account, load_config, save_attachments
+from .common import (attachments, body_text, build_message, build_reply, die, get_account, load_config,
+                     save_attachments)
 
 BACKENDS = {"gmail": gmail, "outlook": outlook}
 
@@ -81,6 +82,25 @@ def cmd_send(a, cfg):
         print(f"sent from {acct['email']} to {', '.join(a.to + a.cc + a.bcc)}")
 
 
+def cmd_reply(a, cfg):
+    name, acct, backend = account(cfg, a)
+    missing = [f for f in a.attach if not Path(f).is_file()]
+    if missing:
+        die(f"attachment not found: {', '.join(missing)}")
+    if a.body is None and sys.stdin.isatty():
+        die("give -b BODY or pipe the body on stdin")
+    body = a.body if a.body is not None else sys.stdin.read()
+    orig = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
+    msg = build_reply(acct, orig, body, a.all, a.attach)
+    rcpts = [ad.addr_spec for h in ("To", "Cc") if msg[h] for ad in msg[h].addresses]
+    if a.draft:
+        backend.save_draft(name, acct, msg)
+        print(f"reply draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}")
+    else:
+        backend.send(name, acct, msg, rcpts)
+        print(f"replied from {acct['email']} to {', '.join(rcpts)}: {msg['Subject']}")
+
+
 def cmd_mkdir(a, cfg):
     name, acct, backend = account(cfg, a)
     backend.mkdir(name, acct, a.folder)
@@ -134,6 +154,14 @@ def main():
     p.add_argument("--attach", action="append", default=[], metavar="FILE")
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
     p.set_defaults(fn=cmd_send)
+
+    p = sub.add_parser("reply", parents=[common, folder], help="reply to a message (quotes it, keeps the thread)")
+    p.add_argument("id", help=id_help)
+    p.add_argument("-b", "--body", help="reply text (default: read stdin)")
+    p.add_argument("--all", action="store_true", help="reply to everyone on the original, not just the sender")
+    p.add_argument("--attach", action="append", default=[], metavar="FILE")
+    p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.set_defaults(fn=cmd_reply)
 
     p = sub.add_parser("mkdir", parents=[common], help="create a folder (Gmail: a label)")
     p.add_argument("folder")

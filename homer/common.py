@@ -131,3 +131,31 @@ def build_message(acct, to, cc, bcc, subject, body, attach):
         maintype, subtype = (mimetypes.guess_type(p)[0] or "application/octet-stream").split("/", 1)
         msg.add_attachment(p.read_bytes(), maintype=maintype, subtype=subtype, filename=p.name)
     return msg
+
+
+def _addrs(*headers):
+    return [a for h in headers if h is not None for a in h.addresses]
+
+
+def build_reply(acct, orig, body, reply_all=False, attach=()):
+    """Reply to `orig` (a parsed message): quotes it and sets the threading headers."""
+    me = acct["email"].lower()
+    seen, to, cc = {me}, [], []
+    for bucket, addrs in ((to, _addrs(orig["Reply-To"] or orig["From"])),
+                          (cc, _addrs(orig["To"], orig["Cc"]) if reply_all else [])):
+        for a in addrs:
+            if a.addr_spec.lower() not in seen:
+                seen.add(a.addr_spec.lower())
+                bucket.append(str(a))
+    if not to:  # replying to your own sent mail: answer its original recipients
+        to, cc = cc or [str(a) for a in _addrs(orig["To"])], []
+    subject = orig["Subject"] or ""
+    if not subject.lower().startswith("re:"):
+        subject = f"Re: {subject}".rstrip()
+    quoted = "\n".join("> " + line if line else ">" for line in body_text(orig).splitlines())
+    text = f"{body.rstrip()}\n\nOn {orig['Date']}, {orig['From']} wrote:\n{quoted}\n"
+    msg = build_message(acct, to, cc, [], subject, text, attach)
+    if orig["Message-ID"]:
+        msg["In-Reply-To"] = orig["Message-ID"]
+        msg["References"] = " ".join(filter(None, [orig["References"], orig["Message-ID"]]))
+    return msg
