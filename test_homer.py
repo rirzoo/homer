@@ -132,3 +132,77 @@ assert inner["From"] == "Bob <bob@x.com>" and "cid:dot@x" in inner.get_body(("ht
 assert sorted(p.get_filename() for p in homer.attachments(inner)) == ["dot.png", "q3.pdf"]
 assert homer.build_forward(me, fo, ["c@x.com"], [], [], attached=True).get_body(("plain",)) is not None  # no note
 print("inline images + attached forward ok")
+
+# backends: one cached connection per account, one call at a time, reconnect once when it drops
+import imaplib  # noqa: E402
+import json  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+from homer import gmail, outlook  # noqa: E402
+
+
+class FakeIMAP:
+    made = live = peak = 0
+
+    def __init__(self):
+        FakeIMAP.made += 1
+        self.dead = False
+
+    def list(self):
+        FakeIMAP.live += 1
+        FakeIMAP.peak = max(FakeIMAP.peak, FakeIMAP.live)
+        time.sleep(0.02)
+        FakeIMAP.live -= 1
+        if self.dead:
+            raise imaplib.IMAP4.abort("socket closed")
+        return "OK", [b'(\\HasNoChildren) "/" "INBOX"']
+
+    def shutdown(self):
+        pass
+
+
+gmail._connect = lambda name, acct: FakeIMAP()
+got = []
+threads = [threading.Thread(target=lambda: got.append(gmail.folders("t", {}))) for _ in range(4)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+assert got == [["INBOX"]] * 4 and FakeIMAP.peak == 1 and FakeIMAP.made == 1
+gmail._sessions["t"].m.dead = True  # server dropped the connection
+assert gmail.folders("t", {}) == ["INBOX"] and FakeIMAP.made == 2
+
+calls = []
+
+
+class FakeConn:
+    made = 0
+
+    def __init__(self, host, timeout):
+        FakeConn.made += 1
+
+    def request(self, method, path, data, headers):
+        calls.append(headers["Authorization"])
+
+    def getresponse(self):
+        return type("R", (), {"status": 401 if len(calls) == 1 else 200, "read": lambda self: b"{}"})()
+
+    def close(self):
+        pass
+
+
+outlook.http.client.HTTPSConnection = FakeConn
+tokens = iter(["old", "new"])
+outlook.access_token = lambda name, acct: outlook._tokens.get(name) or outlook._tokens.setdefault(name, next(tokens))
+assert outlook._graph("t", {}, "/me") == b"{}" and calls == ["Bearer old", "Bearer new"]  # expired token refreshed
+assert outlook._graph("t", {}, "/me") == b"{}" and FakeConn.made == 1  # keep-alive connection reused
+
+with tempfile.TemporaryDirectory() as tmp:
+    outlook.ID_CACHE = Path(tmp)
+    outlook._graph = lambda *a, **k: json.dumps({"value": [
+        {"id": "AAMk1", "isRead": False, "receivedDateTime": "2026-10-11T10:00:00Z", "subject": "s"}]}).encode()
+    assert outlook.list_messages("t", {}, "inbox", 5, False, None, ids=True)[0][0] == "AAMk1"
+    assert not any(Path(tmp).iterdir())  # ids=True leaves the agents' row numbers alone
+    assert outlook.list_messages("t", {}, "inbox", 5, False, None)[0][0] == "1"
+    assert json.loads((Path(tmp) / "t.json").read_text()) == ["AAMk1"]
+print("backend sessions ok")
