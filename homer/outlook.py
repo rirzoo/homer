@@ -1,7 +1,9 @@
 """Microsoft 365 / Outlook (e.g. institute mail) via Microsoft Graph, OAuth2 device-code login."""
 import base64
+import http.client
 import json
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -11,11 +13,15 @@ from pathlib import Path
 
 from .common import die, secret_get, secret_set
 
-GRAPH = "https://graph.microsoft.com/v1.0"
+GRAPH_HOST, GRAPH = "graph.microsoft.com", "/v1.0"
 DEFAULT_SCOPE = ("https://graph.microsoft.com/Mail.ReadWrite "
                  "https://graph.microsoft.com/Mail.Send offline_access")
 WELL_KNOWN = {"inbox", "sentitems", "drafts", "deleteditems", "junkemail", "archive", "outbox"}
 ID_CACHE = Path("~/.cache/homer").expanduser()
+KEEP = 60  # seconds a Graph connection is reused; an older one is replaced rather than risk a stale socket
+_conns = {}  # account name -> (keep-alive HTTPSConnection, last used), saves a TLS handshake per call
+_locks = {}  # account name -> Lock; one request at a time per account, so threads can share a connection
+_folder_ids = {}  # (account name, folder) -> Graph folder id
 
 
 # --- OAuth2 -----------------------------------------------------------------
@@ -75,21 +81,42 @@ def login(name, acct):
 def _graph(name, acct, path, data=None, ctype="application/json", method=None):
     if isinstance(data, dict):
         data = json.dumps(data).encode()
-    req = urllib.request.Request(GRAPH + path, data, {"Authorization": "Bearer " + access_token(name, acct),
-                                                      "Content-Type": ctype}, method=method)
-    try:
-        with urllib.request.urlopen(req) as r:
-            return r.read()
-    except urllib.error.HTTPError as e:
-        die(f"graph {e.code}: {e.read().decode(errors='replace')[:400]}")
+    method = method or ("GET" if data is None else "POST")
+    with _locks.setdefault(name, threading.Lock()):
+        for _ in range(3):
+            c, used = _conns.pop(name, (None, 0))
+            if c and time.monotonic() - used > KEEP:
+                c.close()
+                c = None
+            reused = c is not None
+            c = c or http.client.HTTPSConnection(GRAPH_HOST, timeout=60)
+            try:
+                c.request(method, GRAPH + path, data, {"Authorization": "Bearer " + access_token(name, acct),
+                                                       "Content-Type": ctype})
+                r = c.getresponse()
+                body = r.read()
+            except (http.client.HTTPException, OSError) as e:
+                c.close()
+                if reused and method != "POST":  # stale keep-alive socket; GET/PATCH are safe to resend, POST isn't
+                    continue
+                die(f"graph request failed: {e}")
+            _conns[name] = (c, time.monotonic())
+            if r.status == 401 and _tokens.pop(name, None):  # access token expired (they last ~1h): refresh, retry
+                continue
+            break
+    if r.status >= 400:
+        die(f"graph {r.status}: {body.decode(errors='replace')[:400]}")
+    return body
 
 
 def _folder_id(name, acct, folder):
     if folder.lower() in WELL_KNOWN:
         return folder.lower()
-    q = urllib.parse.urlencode({"$filter": f"displayName eq '{folder.replace(chr(39), chr(39) * 2)}'"})
-    hits = json.loads(_graph(name, acct, f"/me/mailFolders?{q}"))["value"]
-    return hits[0]["id"] if hits else die(f"no folder named {folder!r}")
+    if (name, folder) not in _folder_ids:
+        q = urllib.parse.urlencode({"$filter": f"displayName eq '{folder.replace(chr(39), chr(39) * 2)}'"})
+        hits = json.loads(_graph(name, acct, f"/me/mailFolders?{q}"))["value"]
+        _folder_ids[name, folder] = hits[0]["id"] if hits else die(f"no folder named {folder!r}")
+    return _folder_ids[name, folder]
 
 
 # Graph message ids are ~150 chars, so `list` numbers rows 1..n and remembers the ids.
@@ -121,7 +148,8 @@ def folders(name, acct):
     return [f["displayName"] for f in json.loads(_graph(name, acct, "/me/mailFolders?$top=100"))["value"]]
 
 
-def list_messages(name, acct, folder, n, unread, search):
+def list_messages(name, acct, folder, n, unread, search, ids=False):
+    """ids=True returns full Graph ids as refs and leaves the row-number cache alone (for the TUI)."""
     q = {"$top": n, "$select": "id,subject,from,receivedDateTime,isRead"}
     if search:
         q["$search"] = f'"{search}"'  # KQL, e.g. from:prof subject:exam; Graph forbids $orderby/$filter with it
@@ -133,12 +161,13 @@ def list_messages(name, acct, folder, n, unread, search):
     msgs = json.loads(_graph(name, acct, path))["value"]
     if search and unread:
         msgs = [m for m in msgs if not m["isRead"]]
-    ID_CACHE.mkdir(parents=True, exist_ok=True)
-    (ID_CACHE / f"{name}.json").write_text(json.dumps([m["id"] for m in msgs]))
+    if not ids:
+        ID_CACHE.mkdir(parents=True, exist_ok=True)
+        (ID_CACHE / f"{name}.json").write_text(json.dumps([m["id"] for m in msgs]))
     rows = []
     for i, m in enumerate(msgs, 1):
         addr = (m.get("from") or {}).get("emailAddress", {})
-        rows.append((str(i), not m["isRead"], datetime.fromisoformat(m["receivedDateTime"]),
+        rows.append((m["id"] if ids else str(i), not m["isRead"], datetime.fromisoformat(m["receivedDateTime"]),
                      addr.get("name") or addr.get("address") or "", m.get("subject") or ""))
     return rows
 
