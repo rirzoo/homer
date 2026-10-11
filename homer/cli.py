@@ -73,7 +73,7 @@ def cmd_send(a, cfg):
     if a.body is None and sys.stdin.isatty():
         die("give -b BODY or pipe the body on stdin")
     body = a.body if a.body is not None else sys.stdin.read()
-    msg = build_message(acct, a.to, a.cc, a.bcc, a.subject, body, a.attach)
+    msg = build_message(acct, a.to, a.cc, a.bcc, a.subject, body, a.attach, a.html)
     if a.draft:
         backend.save_draft(name, acct, msg)
         print(f"draft saved in {acct['email']} Drafts (not sent)")
@@ -153,6 +153,7 @@ def main():
     p.add_argument("-b", "--body", help="body text (default: read stdin)")
     p.add_argument("--attach", action="append", default=[], metavar="FILE")
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.add_argument("--html", action="store_true", help="body is HTML (a plain-text copy is added)")
     p.set_defaults(fn=cmd_send)
 
     p = sub.add_parser("reply", parents=[common, folder], help="reply to a message (quotes it, keeps the thread)")
