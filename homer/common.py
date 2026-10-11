@@ -114,7 +114,7 @@ def save_attachments(parts, directory):
     return saved
 
 
-def build_message(acct, to, cc, bcc, subject, body, attach):
+def build_message(acct, to, cc, bcc, subject, body, attach, html=False):
     msg = EmailMessage()
     msg["From"] = acct["email"]
     msg["To"] = ", ".join(to)
@@ -125,7 +125,9 @@ def build_message(acct, to, cc, bcc, subject, body, attach):
     msg["Subject"] = subject
     msg["Date"] = email.utils.formatdate(localtime=True)
     msg["Message-ID"] = email.utils.make_msgid(domain=acct["email"].rpartition("@")[2])
-    msg.set_content(body)
+    msg.set_content(html_to_text(body) if html else body)  # ponytail: plain fallback drops link URLs
+    if html:
+        msg.add_alternative(body, subtype="html")
     for f in attach:
         p = Path(f)
         maintype, subtype = (mimetypes.guess_type(p)[0] or "application/octet-stream").split("/", 1)

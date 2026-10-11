@@ -34,5 +34,12 @@ with tempfile.TemporaryDirectory() as tmp:
         policy=email.policy.default)
     assert homer.save_attachments([evil], out)[0].parent == out
 
+    msg = homer.build_message({"email": "me@example.com"}, ["a@x.com"], [], [], "s",
+                              '<p>Hi</p><p><a href="https://github.com/rirzoo/homer">homer</a></p>', [pdf], html=True)
+    parsed = email.message_from_bytes(msg.as_bytes(), policy=email.policy.default)
+    assert 'href="https://github.com/rirzoo/homer"' in parsed.get_body(("html",)).get_content()
+    assert parsed.get_body(("plain",)).get_content().strip() == "Hi\nhomer"
+    assert [p.get_filename() for p in homer.attachments(parsed)] == ["report.pdf"]
+
 assert homer.html_to_text("<style>x{}</style><p>Hi&nbsp;there</p><p>bye</p>") == "Hi there\nbye"
 print("ok")

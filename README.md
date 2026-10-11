@@ -158,13 +158,13 @@ homer login   -a ACCT                            link an account
 homer folders -a ACCT                            list folders
 homer list    [-a ACCT] [-f FOLDER] [-n 20] [--unread] [--search QUERY]
 homer read    ID [-a ACCT] [-f FOLDER] [--save DIR]
-homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft]
+homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html]
 homer mkdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
 ```
 
-`--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
+`--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending. `--html` treats the body as HTML and adds a plain-text copy for clients that don't show HTML.
 
 Provider differences:
 
