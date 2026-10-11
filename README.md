@@ -17,7 +17,7 @@ Reading a message leaves it unread. Only `mark` changes that, so you (or an AI a
 
 For going through mail yourself, run `homer` on its own to get a full-screen interface you drive from the keyboard. It's the one part of homer where opening a message marks it read, the way a normal mail app does.
 
-homer uses only the Python standard library. Passwords and tokens are stored in your system keyring, not in files.
+The command line uses only the Python standard library. The TUI uses Textual, which installs with homer. Passwords and tokens are stored in your system keyring, not in files.
 
 ## Contents
 
@@ -33,6 +33,8 @@ homer uses only the Python standard library. Passwords and tokens are stored in 
 - [Usage](#usage)
   - [HTML mail](#html-mail)
 - [TUI](#tui)
+  - [Folders](#folders)
+  - [Writing mail](#writing-mail)
   - [Planned for the TUI](#planned-for-the-tui)
 - [Help & troubleshooting](#help--troubleshooting)
 - [Development](#development)
@@ -225,39 +227,49 @@ Outlook numbers are reassigned on every `list`, so run `list` on the folder righ
 
 ## TUI
 
-`homer` opens your default account's inbox and `homer -a inst` opens another account. `homer tui` does the same thing. It shows the newest 50 messages, with unread ones in bold and marked `*`. `Enter` opens a message and marks it read, `q` takes you back, and `?` shows every key.
+`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with homer. [TUI.md](TUI.md) explains how it's meant to be used and what it can't do, and [FRAME.md](FRAME.md) has a wireframe of every window with the reasons behind each choice.
 
-| Key | In the list | In a message |
+The screen has two panes: your mail on the left and the conversation under the cursor on the right. `f` opens a third pane on the left with your folders and your other accounts, and closes again once you pick one. A row is a whole conversation, so your replies sit next to the mail they answer (`T` switches to one row per mail). Below 100 columns you get one pane at a time.
+
+Nothing waits on the server. Archive, delete, move and mark take effect on screen at once and sync in the background, and `u` undoes the last one. If the server refuses, the row comes back and the status line says why. Mail you've already seen is cached, so the list shows up the moment homer starts.
+
+| Key | In the list | In a conversation (`Enter`) |
 |---|---|---|
-| `j` `k`, arrows, PgUp/PgDn | move | scroll (`space` and `b` page too) |
-| `Enter` | open the message | |
+| `j` `k`, arrows, `g` `G` | move | scroll (`space` and `b` page too) |
+| `space` / `b` | scroll the preview | |
+| `Enter` | open the conversation full width | expand or collapse the mail at the cursor |
+| `n` / `p` | | next / previous mail |
 | `c` | write a new mail | |
-| `r` / `R` | reply / reply to all | same |
-| `F` | forward, attachments included | same |
-| `m` | toggle read and unread | same |
-| `d` | delete: asks first, then moves it to the trash | same |
-| `M` | move to a folder | same |
-| `s` | | save attachments to `~/Downloads` |
-| `f` / `a` | switch folder / account | |
-| `/` | search, with the same syntax as `--search` | |
-| `g` / `+` | refresh / load 50 older messages | |
+| `r` / `R` / `F` | reply / reply to all / forward | same |
+| `e` / `d` | archive / delete (to Trash) | same |
+| `m` / `M` | read or unread / move to a folder | same |
+| `x` | select the row, so the next action covers every selected row | |
+| `u` | undo | |
+| `/` | search; `Tab` in the search bar switches between this folder and all folders | |
+| `f` | folders and accounts | |
+| `s` / `o` / `v` | | save attachments / open a link / open the mail in your browser |
+| `?` | every key for the window you're in | same |
 | `q` | quit | back to the list |
 
-You write mail in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`). For a new mail the file starts with `To:`, `Cc:`, `Bcc:`, `Subject:` and `Attach:` lines. Fill them in, leave a blank line and write the body below it, separating several addresses or attachment paths with commas. A reply only has the `Attach:` line, because the recipients, subject and quote come from the original. A forward has `To:`, `Cc:`, `Bcc:` and `Attach:`, and the note under them is optional. After you save and quit, homer asks: `y` sends, `d` saves a draft, `e` reopens the editor and `q` throws it away. An empty body also throws it away, except on a forward, where an empty `To:` does. If sending fails, your text stays in a file and homer shows you where.
+Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `is:read` `has:attachment` `before:2026-10-01` `after:2026-09-01` and plain words. homer translates it for Gmail or Outlook. `+` loads 50 older conversations and `ctrl+r` syncs right away; homer also syncs every two minutes on its own.
 
-Mail from the TUI goes out as plain text. Every action is a round trip to the server, so the screen pauses for a second or so while it works. On Outlook accounts the TUI holds on to the full message ids, so an agent running `homer list` at the same time can't make your keypress land on a different message.
+### Folders
+
+Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
+
+### Writing mail
+
+`c`, `r`, `R` and `F` open a form. You type the recipients (with suggestions from people you've mailed) and the subject in homer, and the body in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`), which `b` or `Enter` in the Subject field opens. Inside the form `Esc` switches from typing to single-key commands: `s` send, `a` attach, `d` save a draft, `q` close (keeps a draft), `D` discard. `ctrl+s` sends from anywhere.
+
+Every mail from the TUI goes out as HTML with a plain-text copy and ends with "Sent with homer", linking to this repository. The footer is shown in the form and can't be removed there; `homer send` from the command line doesn't add it.
+
+A sent mail appears at the top of Mailbox with a 10-second countdown, during which `u` takes it back. Then it shows `↑` while sending and `✓` once it's gone. If sending fails the row turns red with `!` and the reason, and `Enter` reopens it. Quitting while a mail is still counting down sends it first.
 
 ### Planned for the TUI
 
-Not in this first version:
-
-- HTML mail when composing, like the CLI's `--html`
-- creating folders (use `homer mkdir` for now)
 - mouse support
-- a conversation view that groups replies into threads
-- checking for new mail in the background, with notifications
-- selecting several messages to move, delete or mark at once
-- server calls that run in the background instead of pausing the screen
+- desktop notifications for new mail
+- bold, lists and other formatting in the body (the body is plain text with links)
 
 ## Help & troubleshooting
 
@@ -274,10 +286,10 @@ If you're stuck or something's broken, [open an issue](https://github.com/rirzoo
 ## Development
 
 ```sh
-python3 test_homer.py      # offline self-check of message building/parsing
+python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP), `homer/outlook.py` (Microsoft Graph + OAuth), `homer/common.py` (config, keyring, MIME helpers), `homer/tui.py` (the curses TUI).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP), `homer/outlook.py` (Microsoft Graph + OAuth), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui.py` (the Textual TUI).
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
 

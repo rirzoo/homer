@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "homer-mail"
 version = "0.1.0"
-description = "Multi-account mail CLI: Gmail/IMAP and Microsoft 365 (Outlook) from the terminal"
+description = "Multi-account mail CLI and TUI: Gmail/IMAP and Microsoft 365 (Outlook) from the terminal"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["textual>=8.2"]  # only the TUI imports it
 
 [project.scripts]
 homer = "homer.cli:main"

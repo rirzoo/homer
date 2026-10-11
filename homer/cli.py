@@ -119,7 +119,10 @@ def cmd_forward(a, cfg):
 
 def cmd_tui(a, cfg):
     name, _, _ = account(cfg, a)
-    from . import tui  # curses loads only for the TUI
+    try:
+        from . import tui  # Textual loads only for the TUI; the CLI stays stdlib-only
+    except ModuleNotFoundError as e:
+        die(f"the TUI needs Textual ({e}); install it with: pip install textual")
     tui.main(cfg, name)
 
 

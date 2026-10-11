@@ -173,13 +173,138 @@ def mkdir(name, acct, folder):
         _ok(m.create(f'"{folder}"'), "create folder")
 
 
+def _uid_set(text):
+    """Expand an IMAP UID set like 5:7,9 into ['5', '6', '7', '9']."""
+    out = []
+    for part in text.split(","):
+        lo, _, hi = part.partition(":")
+        lo, hi = sorted((int(lo), int(hi or lo)))
+        out += [str(u) for u in range(lo, hi + 1)]
+    return out
+
+
 @_session
 def move(s, folder, refs, dest):
+    """Returns the messages' UIDs in dest (from the server's COPYUID), None where it didn't say.
+    Gmail: moving out of All Mail only adds the label, so undoing an archive is a plain move back."""
     _select(s, folder)
+    s.m.response("COPYUID")  # drop a stale one
     _ok(s.m.uid("MOVE", _uids(refs), f'"{dest}"'), "move")
+    pairs = {}
+    for line in filter(None, s.m.response("COPYUID")[1]):
+        _, src, dst = line.decode().split()
+        pairs.update(zip(_uid_set(src), _uid_set(dst)))
+    return [pairs.get(r) for r in refs]
 
 
 @_session
 def mark(s, folder, refs, read):
     _select(s, folder)
     _ok(s.m.uid("STORE", _uids(refs), "+FLAGS" if read else "-FLAGS", r"(\Seen)"), "mark")
+
+
+# --- TUI extras ---------------------------------------------------------------
+
+SPECIAL = (r"\Sent", r"\All", r"\Drafts", r"\Trash", r"\Junk", r"\Important", r"\Flagged")
+
+
+@_session
+def special_folders(s):
+    r"""Special-use folders (RFC 6154) by flag, e.g. {'\Sent': '[Gmail]/Sent Mail'}, plus \Inbox."""
+    out = {r"\Inbox": "INBOX"}
+    for line in s.m.list()[1]:
+        flags = line.split(b")")[0].decode(errors="replace").lstrip("(").split()
+        for f in SPECIAL:
+            if f in flags:
+                out.setdefault(f, _folder_name(line))
+    return out
+
+
+def _quote(v):
+    return '"' + v.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _gmail_raw(q):
+    """homer search -> Gmail's own search syntax (what X-GM-RAW takes)."""
+    out = [f"{k}:{_quote(v)}" for k in ("from", "to", "subject") for v in q[k]]
+    if q["unread"] is not None:
+        out.append("is:unread" if q["unread"] else "is:read")
+    if q["attachment"]:
+        out.append("has:attachment")
+    out += [f"{k}:{q[k]:%Y/%m/%d}" for k in ("before", "after") if q[k]]
+    return " ".join(out + [_quote(w) for w in q["words"]])
+
+
+def _imap_search(q):
+    """homer search -> plain IMAP SEARCH keys, for servers without Gmail's extensions (ASCII only, no has:)."""
+    out = [f"{k.upper()} {_quote(v)}" for k in ("from", "to", "subject") for v in q[k]]
+    if q["unread"] is not None:
+        out.append("UNSEEN" if q["unread"] else "SEEN")
+    if q["before"]:
+        out.append(f"BEFORE {q['before']:%d-%b-%Y}")
+    if q["after"]:
+        out.append(f"SINCE {q['after']:%d-%b-%Y}")
+    return " ".join(out + [f"TEXT {_quote(w)}" for w in q["words"]]) or "ALL"
+
+
+def _labels(meta):
+    hit = re.search(rb"X-GM-LABELS \((.*?)\)", meta)
+    if not hit:
+        return []
+    return [q.decode().replace("\\\\", "\\") if q else bare.decode()
+            for q, bare in re.findall(rb'"((?:[^"\\]|\\.)*)"|(\S+)', hit.group(1))]
+
+
+def _summary(h, meta, folder):
+    frm = h["from"].addresses[0] if h["from"] is not None and h["from"].addresses else None
+    msgid = (h["message-id"] or "").strip()
+    refs = (h["references"] or "").split() or (h["in-reply-to"] or "").split()
+    thrid = re.search(rb"X-GM-THRID (\d+)", meta)
+    when = h["date"].datetime if h["date"] is not None else None
+    return {"id": re.search(rb"UID (\d+)", meta).group(1).decode(), "folder": folder,
+            "unread": b"\\Seen" not in meta, "when": when.isoformat() if when else None,
+            "name": frm.display_name if frm else "", "addr": frm.addr_spec if frm else "",
+            "to": [[a.display_name, a.addr_spec] for x in (h["to"], h["cc"]) if x is not None for a in x.addresses],
+            "subject": h["subject"] or "", "msgid": msgid,
+            "thread": thrid.group(1).decode() if thrid else (refs[0] if refs else msgid),
+            "attach": False, "labels": _labels(meta)}
+
+
+@_session
+def summaries(s, folder, n, query=None):
+    """Newest n messages in folder as dicts for the TUI (folder None: All Mail). query: parse_query() output."""
+    gm = "X-GM-EXT-1" in s.m.capabilities
+    if folder is None:
+        folder = next((_folder_name(line) for line in s.m.list()[1] if rb"\All" in line.split(b")")[0]), "INBOX")
+    total = _select(s, folder, refresh=True)
+    items = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)]"
+    items += " X-GM-THRID X-GM-LABELS)" if gm else ")"
+    if query:
+        if gm:
+            s.m.literal = _gmail_raw(query).encode()  # sent as a literal, so non-ASCII words work
+            typ, data = s.m.uid("SEARCH", "CHARSET", "UTF-8", "X-GM-RAW")
+        else:
+            typ, data = s.m.uid("SEARCH", None, _imap_search(query))
+        if typ != "OK":
+            die(f"search failed: {data}")
+        uids = sorted(data[0].split(), key=int)[-n:]
+        if not uids:
+            return []
+        typ, data = s.m.uid("FETCH", b",".join(uids), items)
+    else:
+        if not total:
+            return []
+        typ, data = s.m.fetch(f"{max(1, total - n + 1)}:{total}", items)
+    rows = []
+    for i, item in enumerate(data):
+        if not isinstance(item, tuple):
+            continue
+        tail = data[i + 1] if i + 1 < len(data) and isinstance(data[i + 1], bytes) else b""
+        rows.append(_summary(email.message_from_bytes(item[1], policy=email.policy.default), item[0] + tail, folder))
+    if gm and rows:  # one more round trip for the attachment flag; cheaper than parsing BODYSTRUCTURE
+        span = f"{min(int(r['id']) for r in rows)}:{max(int(r['id']) for r in rows)}"
+        typ, data = s.m.uid("SEARCH", None, "UID", span, "X-GM-RAW", '"has:attachment"')
+        withatt = set(data[0].decode().split()) if typ == "OK" else set()
+        for r in rows:
+            r["attach"] = r["id"] in withatt
+    return sorted(rows, key=lambda r: int(r["id"]), reverse=True)
