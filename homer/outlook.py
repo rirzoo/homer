@@ -108,7 +108,7 @@ def _msg_path(name, ref):
 
 
 def _upload_mime(name, acct, path, msg):
-    raw = base64.b64encode(msg.as_bytes())
+    raw = base64.b64encode(msg.as_bytes(policy=msg.policy.clone(linesep="\r\n")))  # MIME wants CRLF; Exchange garbles soft breaks without it
     # ponytail: MIME upload caps the request at 4 MB; bigger needs a draft + upload session
     if len(raw) > 4 * 1024 * 1024:
         die("message too large for Graph MIME upload (4 MB limit, attachments included)")
