@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from . import gmail, outlook
-from .common import (attachments, body_text, build_message, build_reply, die, get_account, load_config,
+from .common import (attachments, body_text, build_forward, build_message, build_reply, die, get_account, load_config,
                      save_attachments)
 
 BACKENDS = {"gmail": gmail, "outlook": outlook}
@@ -101,6 +101,22 @@ def cmd_reply(a, cfg):
         print(f"replied from {acct['email']} to {', '.join(rcpts)}: {msg['Subject']}")
 
 
+def cmd_forward(a, cfg):
+    name, acct, backend = account(cfg, a)
+    missing = [f for f in a.attach if not Path(f).is_file()]
+    if missing:
+        die(f"attachment not found: {', '.join(missing)}")
+    body = a.body if a.body is not None else "" if sys.stdin.isatty() else sys.stdin.read()
+    orig = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
+    msg = build_forward(acct, orig, a.to, a.cc, a.bcc, body, a.attach, a.html, a.attached)
+    if a.draft:
+        backend.save_draft(name, acct, msg)
+        print(f"forward draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}")
+    else:
+        backend.send(name, acct, msg, a.to + a.cc + a.bcc)
+        print(f"forwarded from {acct['email']} to {', '.join(a.to + a.cc + a.bcc)}: {msg['Subject']}")
+
+
 def cmd_tui(a, cfg):
     name, _, _ = account(cfg, a)
     from . import tui  # curses loads only for the TUI
@@ -170,6 +186,18 @@ def main():
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
     p.add_argument("--html", action="store_true", help="reply text is HTML (a plain-text copy is added)")
     p.set_defaults(fn=cmd_reply)
+
+    p = sub.add_parser("forward", parents=[common, folder], help="forward a message with its attachments")
+    p.add_argument("id", help=id_help)
+    p.add_argument("--to", action="append", required=True)
+    p.add_argument("--cc", action="append", default=[])
+    p.add_argument("--bcc", action="append", default=[])
+    p.add_argument("-b", "--body", help="note above the forwarded message (default: stdin if piped, else none)")
+    p.add_argument("--attach", action="append", default=[], metavar="FILE")
+    p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.add_argument("--html", action="store_true", help="note is HTML (a plain-text copy is added)")
+    p.add_argument("--attached", action="store_true", help="send the original as an .eml attachment, not inline")
+    p.set_defaults(fn=cmd_forward)
 
     sub.add_parser("tui", parents=[common], help="browse and manage mail interactively").set_defaults(fn=cmd_tui)
 

@@ -81,3 +81,54 @@ assert hr["In-Reply-To"] == "<h1@x.com>"
 pr = homer.build_reply({"email": "me@example.com"}, orig, "<p>ok</p>", html=True)  # plain-text original
 assert "See you" in pr.get_body(("html",)).get_content()
 print("html reply ok")
+
+# forward: subject, header block, original body, original attachments carried over
+fo = email.message_from_bytes(
+    b"From: Bob <bob@x.com>\r\nTo: me@example.com\r\nSubject: Report\r\nDate: Sun, 11 Oct 2026 10:00:00 +0530\r\n"
+    b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\n\r\n"
+    b"Numbers inside\r\n--B\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=q3.pdf\r\n"
+    b"Content-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n--B--\r\n", policy=email.policy.default)
+me = {"email": "me@example.com"}
+f = email.message_from_bytes(homer.build_forward(me, fo, ["carol@x.com"], [], [], "FYI").as_bytes(),
+                             policy=email.policy.default)
+assert (f["To"], f["Subject"], f["In-Reply-To"]) == ("carol@x.com", "Fwd: Report", None)
+t = homer.body_text(f)
+assert t.startswith("FYI\n\n---------- Forwarded message") and "From: Bob <bob@x.com>" in t and "Numbers inside" in t
+assert [(p.get_filename(), p.get_payload(decode=True)) for p in homer.attachments(f)] == [("q3.pdf", b"%PDF-")]
+assert homer.body_text(homer.build_forward(me, fo, ["c@x.com"], [], [])).startswith("----------")  # no note
+assert homer.build_forward(me, f, ["c@x.com"], [], [])["Subject"] == "Fwd: Report"  # no "Fwd: Fwd:"
+page = homer.build_forward(me, horig, ["c@x.com"], [], [], "<p>look</p>", html=True).get_body(("html",)).get_content()
+assert "<p>See <b>you</b></p>" in page and "From: Bob &lt;bob@x.com&gt;" in page
+print("forward ok")
+
+# cid: images in an HTML original stay inline in HTML forwards and replies; other attachments stay attachments
+img = email.message.EmailMessage()
+img["From"], img["Subject"] = "Bob <bob@x.com>", "Pic"
+img.set_content("see pic")
+img.add_alternative('<html><body><p>Look <img src="cid:dot@x"></p></body></html>', subtype="html")
+img.get_body(("html",)).add_related(b"\x89PNG", "image", "png", cid="<dot@x>", filename="dot.png")
+img.add_attachment(b"%PDF-", maintype="application", subtype="pdf", filename="q3.pdf")
+img = email.message_from_bytes(img.as_bytes(), policy=email.policy.default)
+for out in (homer.build_forward(me, img, ["c@x.com"], [], [], "<p>fyi</p>", html=True),
+            homer.build_reply(me, img, "<p>nice</p>", html=True)):
+    out = email.message_from_bytes(out.as_bytes(), policy=email.policy.default)
+    assert 'src="cid:dot@x"' in out.get_body(("html",)).get_content()
+    rel = next(p for p in out.walk() if p["Content-ID"] == "<dot@x>")
+    assert rel.get_payload(decode=True) == b"\x89PNG" and rel.get_content_disposition() == "inline"
+assert [p.get_filename() for p in homer.attachments(out)] == ["dot.png"]  # reply: only the inline image
+fw = homer.build_forward(me, img, ["c@x.com"], [], [], "<p>fyi</p>", html=True)
+assert sorted(p.get_filename() for p in homer.attachments(fw)) == ["dot.png", "q3.pdf"]  # image once, not twice
+plain = homer.build_forward(me, img, ["c@x.com"], [], [])  # text forward: images come as plain attachments
+assert sorted(p.get_filename() for p in homer.attachments(plain)) == ["dot.png", "q3.pdf"]
+
+# --attached: original goes whole as message/rfc822, note is the body
+at = homer.build_forward(me, img, ["c@x.com"], [], [], "see attached", attached=True)
+at = email.message_from_bytes(at.as_bytes(), policy=email.policy.default)
+assert at["Subject"] == "Fwd: Pic" and homer.body_text(at).strip() == "see attached"
+eml = next(p for p in at.walk() if p.get_content_type() == "message/rfc822")
+assert eml.get_filename() == "Pic.eml"
+inner = eml.get_content()
+assert inner["From"] == "Bob <bob@x.com>" and "cid:dot@x" in inner.get_body(("html",)).get_content()
+assert sorted(p.get_filename() for p in homer.attachments(inner)) == ["dot.png", "q3.pdf"]
+assert homer.build_forward(me, fo, ["c@x.com"], [], [], attached=True).get_body(("plain",)) is not None  # no note
+print("inline images + attached forward ok")
