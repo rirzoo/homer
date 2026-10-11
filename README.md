@@ -15,7 +15,28 @@ You can list, search and read mail, save attachments, send mail with attachments
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
+For going through mail yourself there's `homer tui`, a full-screen interface you drive from the keyboard. It's the one part of homer where opening a message marks it read, the way a normal mail app does.
+
 homer uses only the Python standard library. Passwords and tokens are stored in your system keyring, not in files.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Install](#install)
+  - [Updating and removing](#updating-and-removing)
+- [Setup](#setup)
+  - [Linking a Gmail account](#linking-a-gmail-account)
+  - [Linking an IIT Patna account](#linking-an-iit-patna-account)
+  - [Linking another institute / Microsoft 365 account](#linking-another-institute--microsoft-365-account)
+    - [Option A: register your own app](#option-a-register-your-own-app)
+    - [Option B: ask your IT department](#option-b-ask-your-it-department)
+- [Usage](#usage)
+  - [HTML mail](#html-mail)
+- [TUI](#tui)
+  - [Planned for the TUI](#planned-for-the-tui)
+- [Help & troubleshooting](#help--troubleshooting)
+- [Development](#development)
+- [License](#license)
 
 ## Requirements
 
@@ -163,6 +184,7 @@ homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--
 homer mkdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
+homer tui     [-a ACCT]                          browse and manage mail interactively
 ```
 
 `--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
@@ -196,6 +218,41 @@ Provider differences:
 
 Outlook numbers are reassigned on every `list`, so run `list` on the folder right before `read`/`move`/`mark`.
 
+## TUI
+
+`homer tui` opens your default account's inbox; `homer tui -a inst` opens another account. It shows the newest 50 messages, with unread ones in bold and marked `*`. `Enter` opens a message and marks it read, `q` takes you back, and `?` shows every key.
+
+| Key | In the list | In a message |
+|---|---|---|
+| `j` `k`, arrows, PgUp/PgDn | move | scroll (`space` and `b` page too) |
+| `Enter` | open the message | |
+| `c` | write a new mail | |
+| `r` / `R` | reply / reply to all | same |
+| `m` | toggle read and unread | same |
+| `d` | delete: asks first, then moves it to the trash | same |
+| `M` | move to a folder | same |
+| `s` | | save attachments to `~/Downloads` |
+| `f` / `a` | switch folder / account | |
+| `/` | search, with the same syntax as `--search` | |
+| `g` / `+` | refresh / load 50 older messages | |
+| `q` | quit | back to the list |
+
+You write mail in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`). For a new mail the file starts with `To:`, `Cc:`, `Bcc:`, `Subject:` and `Attach:` lines. Fill them in, leave a blank line and write the body below it, separating several addresses or attachment paths with commas. A reply only has the `Attach:` line, because the recipients, subject and quote come from the original. After you save and quit, homer asks: `y` sends, `d` saves a draft, `e` reopens the editor and `q` throws it away. An empty body also throws it away. If sending fails, your text stays in a file and homer shows you where.
+
+Mail from the TUI goes out as plain text. Every action is a round trip to the server, so the screen pauses for a second or so while it works. On Outlook accounts the TUI holds on to the full message ids, so an agent running `homer list` at the same time can't make your keypress land on a different message.
+
+### Planned for the TUI
+
+Not in this first version:
+
+- HTML mail when composing, like the CLI's `--html`
+- creating folders (use `homer mkdir` for now)
+- mouse support
+- a conversation view that groups replies into threads
+- checking for new mail in the background, with notifications
+- selecting several messages to move, delete or mark at once
+- server calls that run in the background instead of pausing the screen
+
 ## Help & troubleshooting
 
 - `homer --help` and `homer <command> --help` show all options.
@@ -214,7 +271,7 @@ If you're stuck or something's broken, [open an issue](https://github.com/rirzoo
 python3 test_homer.py      # offline self-check of message building/parsing
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP), `homer/outlook.py` (Microsoft Graph + OAuth), `homer/common.py` (config, keyring, MIME helpers).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP), `homer/outlook.py` (Microsoft Graph + OAuth), `homer/common.py` (config, keyring, MIME helpers), `homer/tui.py` (the curses TUI).
 
 ## License
 
