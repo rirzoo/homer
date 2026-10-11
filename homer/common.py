@@ -3,9 +3,11 @@ import email.utils
 import mimetypes
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tomllib
+from datetime import date
 from email.message import EmailMessage
 from html import escape
 from html.parser import HTMLParser
@@ -165,8 +167,9 @@ def _keep_images(msg, images):
                          cid=p["Content-ID"], disposition="inline", filename=p.get_filename())
 
 
-def build_reply(acct, orig, body, reply_all=False, attach=(), html=False):
-    """Reply to `orig` (a parsed message): quotes it and sets the threading headers."""
+def build_reply(acct, orig, body, reply_all=False, attach=(), html=False, plain=None):
+    """Reply to `orig` (a parsed message): quotes it and sets the threading headers.
+    plain: your text for the plain-text copy of an HTML reply (default: derived from body)."""
     me = acct["email"].lower()
     seen, to, cc = {me}, [], []
     for bucket, addrs in ((to, _addrs(orig["Reply-To"] or orig["From"])),
@@ -182,7 +185,7 @@ def build_reply(acct, orig, body, reply_all=False, attach=(), html=False):
         subject = f"Re: {subject}".rstrip()
     said = f"On {orig['Date']}, {orig['From']} wrote:"
     quoted = "\n".join("> " + line if line else ">" for line in body_text(orig).splitlines())
-    text = f"{(html_to_text(body) if html else body).rstrip()}\n\n{said}\n{quoted}\n"
+    text = f"{(plain if plain is not None else html_to_text(body) if html else body).rstrip()}\n\n{said}\n{quoted}\n"
     if html:  # HTML part quotes the original's HTML; the plain copy keeps "> " quoting
         page = (f'{body}\n<p>{escape(said)}</p>\n<blockquote style="margin:0 0 0 .8ex;border-left:1px solid #ccc;'
                 f'padding-left:1ex">{_quote_html(orig)}</blockquote>')
@@ -196,7 +199,7 @@ def build_reply(acct, orig, body, reply_all=False, attach=(), html=False):
     return msg
 
 
-def build_forward(acct, orig, to, cc, bcc, body="", attach=(), html=False, attached=False):
+def build_forward(acct, orig, to, cc, bcc, body="", attach=(), html=False, attached=False, plain=None):
     """Forward `orig` inline (your note, its headers, body and attachments), or with attached=True as an .eml."""
     subject = orig["Subject"] or ""
     if not subject.lower().startswith(("fwd:", "fw:")):
@@ -207,7 +210,7 @@ def build_forward(acct, orig, to, cc, bcc, body="", attach=(), html=False, attac
         msg.add_attachment(orig, filename=f"{name}.eml")
         return msg
     head = [f"{h}: {orig[h]}" for h in ("From", "Date", "Subject", "To", "Cc") if orig[h]]
-    note = (html_to_text(body) if html else body).rstrip()
+    note = (plain if plain is not None else html_to_text(body) if html else body).rstrip()
     text = f"{note}\n\n---------- Forwarded message ---------\n" + "\n".join(head) + f"\n\n{body_text(orig)}\n"
     text = text.lstrip("\n")
     images = []
@@ -225,3 +228,41 @@ def build_forward(acct, orig, to, cc, bcc, body="", attach=(), html=False, attac
             msg.add_attachment(p.get_payload(decode=True) or b"", maintype=maintype, subtype=subtype,
                                filename=p.get_filename())
     return msg
+
+
+# --- search -----------------------------------------------------------------
+
+SEARCH_KEYS = ("from", "to", "subject", "is", "has", "before", "after")
+
+
+def parse_query(q):
+    """Split homer's search syntax (from: to: subject: is:unread|read has:attachment before:/after:YYYY-MM-DD,
+    plus free words) into a dict for the backends to translate. Raises ValueError for a known filter with a
+    value it can't use (before:yesterdy); anything else is searched as words."""
+    try:
+        parts = shlex.split(q)  # from:"Kavitha Das" stays one part
+    except ValueError:
+        raise ValueError("unbalanced quote") from None
+    out = {"from": [], "to": [], "subject": [], "words": [], "unread": None, "attachment": False,
+           "before": None, "after": None}
+    for part in parts:
+        key, sep, value = part.partition(":")
+        key = key.lower()
+        if not sep or key not in SEARCH_KEYS:  # plain words, and things like urls or 10:30
+            out["words"].append(part)
+        elif not value:
+            raise ValueError(f"{key}: needs a value")
+        elif key in ("from", "to", "subject"):
+            out[key].append(value)
+        elif key == "is" and value.lower() in ("unread", "read"):
+            out["unread"] = value.lower() == "unread"
+        elif key == "has" and value.lower() in ("attachment", "attachments"):
+            out["attachment"] = True
+        elif key in ("before", "after"):
+            try:
+                out[key] = date.fromisoformat(value)
+            except ValueError:
+                raise ValueError(f"{key}:{value} is not a date like 2026-10-01") from None
+        else:
+            raise ValueError(f"{key}:{value} isn't a filter homer knows")
+    return out

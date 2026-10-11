@@ -189,11 +189,72 @@ def mkdir(name, acct, folder):
 
 
 def move(name, acct, folder, refs, dest):
+    """Returns the messages' new ids; Graph gives a moved message a new id."""
     dest_id = _folder_id(name, acct, dest)
-    for ref in refs:
-        _graph(name, acct, _msg_path(name, ref) + "/move", {"destinationId": dest_id})
+    return [json.loads(_graph(name, acct, _msg_path(name, ref) + "/move", {"destinationId": dest_id}))["id"]
+            for ref in refs]
 
 
 def mark(name, acct, folder, refs, read):
     for ref in refs:
         _graph(name, acct, _msg_path(name, ref), {"isRead": read}, method="PATCH")
+
+
+# --- TUI extras ---------------------------------------------------------------
+
+SPECIAL = {r"\Inbox": "inbox", r"\Sent": "sentitems", r"\All": "archive", r"\Drafts": "drafts",
+           r"\Trash": "deleteditems", r"\Junk": "junkemail"}  # same keys as gmail.special_folders
+_special = {}
+
+
+def special_folders(name, acct):
+    """Display names of the well-known folders, keyed like gmail.special_folders; Archive stands in for All Mail."""
+    if name not in _special:
+        out = {}
+        for flag, wk in SPECIAL.items():
+            try:
+                out[flag] = json.loads(_graph(name, acct, f"/me/mailFolders/{wk}?$select=displayName"))["displayName"]
+            except SystemExit:  # a mailbox without that folder (Archive is optional)
+                pass
+        _special[name] = out
+    return _special[name]
+
+
+def _kql(q):
+    """homer search -> Outlook's KQL for $search. is:unread/read isn't searchable; summaries filters it."""
+    quote = lambda v: '"' + v.replace('"', "") + '"' if " " in v else v.replace('"', "")
+    out = [f"{k}:{quote(v)}" for k in ("from", "to", "subject") for v in q[k]]
+    if q["attachment"]:
+        out.append("hasAttachments:true")
+    if q["before"]:
+        out.append(f"received<{q['before']:%Y-%m-%d}")
+    if q["after"]:
+        out.append(f"received>={q['after']:%Y-%m-%d}")
+    return " ".join(out + [quote(w) for w in q["words"]])
+
+
+def summaries(name, acct, folder, n, query=None):
+    """Newest n messages in folder as dicts for the TUI (folder None: every folder). query: parse_query() output."""
+    q = {"$top": n, "$select": "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,"
+                               "conversationId,hasAttachments,internetMessageId"}
+    kql = _kql(query) if query else ""
+    if kql:
+        q["$search"] = '"' + kql.replace('"', '\\"') + '"'  # results come newest first
+    else:
+        q["$orderby"] = "receivedDateTime desc"
+        if query and query["unread"] is not None:
+            q["$filter"] = f"receivedDateTime ge 1900-01-01T00:00:00Z and isRead eq {str(not query['unread']).lower()}"
+    base = f"/me/mailFolders/{_folder_id(name, acct, folder)}/messages" if folder else "/me/messages"
+    msgs = json.loads(_graph(name, acct, f"{base}?{urllib.parse.urlencode(q)}"))["value"]
+    if query and query["unread"] is not None:
+        msgs = [m for m in msgs if m["isRead"] != query["unread"]]
+    rows = []
+    for m in msgs:
+        frm = (m.get("from") or {}).get("emailAddress", {})
+        rows.append({"id": m["id"], "folder": folder, "unread": not m["isRead"], "when": m["receivedDateTime"],
+                     "name": frm.get("name", ""), "addr": frm.get("address", ""),
+                     "to": [[r["emailAddress"].get("name", ""), r["emailAddress"].get("address", "")]
+                            for r in m.get("toRecipients", []) + m.get("ccRecipients", [])],
+                     "subject": m.get("subject") or "", "msgid": m.get("internetMessageId", ""),
+                     "thread": m.get("conversationId", ""), "attach": m.get("hasAttachments", False), "labels": []})
+    return rows

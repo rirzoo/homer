@@ -41,12 +41,6 @@ with tempfile.TemporaryDirectory() as tmp:
     assert parsed.get_body(("plain",)).get_content().strip() == "Hi\nhomer"
     assert [p.get_filename() for p in homer.attachments(parsed)] == ["report.pdf"]
 
-from homer.tui import parse_draft  # noqa: E402
-d = parse_draft("To: a@x.com, \"Doe, Jane\" <j@x.com>\nCc:\nSubject: Hi, all\nAttach: ~/a.pdf, b.txt\n\nline 1\n\nline 2\n")
-assert d["to"] == ["a@x.com", "\"Doe, Jane\" <j@x.com>"] and d["cc"] == [] and d["subject"] == "Hi, all"
-assert d["attach"] == [str(Path("~/a.pdf").expanduser()), "b.txt"] and d["body"] == "line 1\n\nline 2"
-assert parse_draft("To: \nSubject: \nAttach: \n\n")["body"] == ""  # untouched template = discard
-assert parse_draft("Attach: \n\nthanks!")["to"] == []  # reply template
 assert homer.html_to_text("<style>x{}</style><p>Hi&nbsp;there</p><p>bye</p>") == "Hi there\nbye"
 print("ok")
 
@@ -206,3 +200,131 @@ with tempfile.TemporaryDirectory() as tmp:
     assert outlook.list_messages("t", {}, "inbox", 5, False, None)[0][0] == "1"
     assert json.loads((Path(tmp) / "t.json").read_text()) == ["AAMk1"]
 print("backend sessions ok")
+
+# TUI data side: search syntax, conversations, the catch-all Archive, folder map, footer, dates
+import asyncio  # noqa: E402
+import types  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
+from homer import store  # noqa: E402
+
+q = homer.parse_query('from:"Kavitha Das" has:attachment is:unread after:2026-09-01 exam http://x.com/a')
+assert q["from"] == ["Kavitha Das"] and q["attachment"] and q["unread"] and q["words"] == ["exam", "http://x.com/a"]
+assert gmail._gmail_raw(q) == 'from:"Kavitha Das" is:unread has:attachment after:2026/09/01 "exam" "http://x.com/a"'
+assert outlook._kql(q) == 'from:"Kavitha Das" hasAttachments:true received>=2026-09-01 exam http://x.com/a'
+for bad in ("before:yesterdy", "is:starred", 'from:"open'):
+    try:
+        homer.parse_query(bad)
+        raise AssertionError(bad)
+    except ValueError:
+        pass
+assert gmail._uid_set("5:7,9") == ["5", "6", "7", "9"]
+
+
+def row(i, folder, addr, thread, when, unread=False, msgid=None, to=("", "a@x.com"), labels=()):
+    return {"id": str(i), "folder": folder, "unread": unread, "when": when, "name": "", "addr": addr,
+            "to": [list(to)], "subject": f"s{thread}", "msgid": msgid or f"<{i}@x>", "thread": thread,
+            "attach": False, "labels": list(labels)}
+
+
+mine = {"me@x.com"}
+msgs = [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+05:30", unread=True),
+        row(2, "Sent", "me@x.com", "t1", "2026-10-11T05:00:00+00:00"),  # 10:30 in India: after mail 1
+        row(3, "INBOX", "me@x.com", "t2", "2026-10-10T10:00:00+00:00", msgid="<self@x>"),
+        row(4, "Sent", "me@x.com", "t2", "2026-10-10T10:00:00+00:00", msgid="<self@x>"),
+        row(5, "Sent", "me@x.com", "t3", "2026-10-09T10:00:00+00:00", to=("Amit", "p@x.com"))]
+cs = store.conversations(msgs, mine)
+assert [c["key"] for c in cs] == ["t1", "t2", "t3"] and cs[0]["unread"]
+assert [m["id"] for m in cs[0]["msgs"]] == ["1", "2"]  # time zones compared, not strings
+assert cs[1]["msgs"][0]["locs"] == [["INBOX", "3"], ["Sent", "4"]]  # mail to yourself: one mail, both places
+assert cs[2]["who"] == "To Amit" and cs[2]["mine"]
+assert len(store.conversations(msgs, mine, single=True)) == 4
+
+with tempfile.TemporaryDirectory() as tmp:
+    store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
+    special = {r"\Inbox": "INBOX", r"\Sent": "[Gmail]/Sent Mail", r"\All": "[Gmail]/All Mail",
+               r"\Drafts": "[Gmail]/Drafts", r"\Trash": "[Gmail]/Bin"}
+    allmail = [row(10, "[Gmail]/All Mail", "a@x.com", "t1", None, labels=[r"\Inbox"]),
+               row(11, "[Gmail]/All Mail", "a@x.com", "t9", None),
+               row(12, "[Gmail]/All Mail", "a@x.com", "t8", None, labels=["Travels/2026"]),
+               row(13, "[Gmail]/All Mail", "me@x.com", "t7", None, labels=[r"\Draft"])]
+    fake = types.SimpleNamespace(special_folders=lambda n, a: special,
+                                 summaries=lambda n, a, f, k, q=None: allmail if f == "[Gmail]/All Mail" else [])
+    acct = store.Account("g", {"email": "me@x.com"}, fake, store.load_maps())
+    acct.load_special()
+    assert acct.folders()["Mailbox"] == ["INBOX", "[Gmail]/Sent Mail"] and acct.target("Archive") == "[Gmail]/All Mail"
+    acct.set_sources("Travels", ["Travels/2026"])
+    assert [m["thread"] for m in acct.fetch("Archive", 50)] == ["t9"]  # inbox, own-folder and draft mail stay out
+    assert store.load_maps() == {"g": {"Travels": ["Travels/2026"]}}  # the TOML homer writes reads back
+    acct.rename("Travels", "Uni")
+    assert acct.custom() == ["Uni"]
+    acct.delete("Uni")
+    assert acct.custom() == []
+
+html, plain = store.with_footer("Hi <Bob>,\n\nsee https://x.com/a.\n")
+assert html == '<p>Hi &lt;Bob&gt;,</p>\n<p>see <a href="https://x.com/a">https://x.com/a</a>.</p>\n' + store.FOOTER_HTML
+assert plain.endswith("\n\nSent with homer (https://github.com/rirzoo/homer)")
+assert store.strip_footer(plain) == "Hi <Bob>,\n\nsee https://x.com/a."
+r = store.build_outgoing({"email": "me@example.com"}, "reply", orig, ["Bob <bob@x.com>"], [], ["z@x.com"],
+                         "Re: Plans", "Sure", [])
+text = r.get_body(("plain",)).get_content()
+assert text.index("Sent with homer (") < text.index("wrote:")  # footer ends your text, quote below (ISSUES.md I1)
+assert store.FOOTER_HTML in r.get_body(("html",)).get_content() and r["Bcc"] == "z@x.com"
+assert r["In-Reply-To"] == "<m2@x.com>" and r["To"] == "Bob <bob@x.com>"
+
+now = datetime(2026, 10, 11, 6, 0, tzinfo=timezone.utc)
+assert [store.short_when(now - d, now) for d in (timedelta(seconds=20), timedelta(minutes=5))] == ["now", "5m"]
+assert store.short_when(datetime(2026, 3, 3, 6, 0, tzinfo=timezone.utc), now) == "3 Mar"
+assert store.short_when(datetime(2025, 3, 3, 6, 0, tzinfo=timezone.utc), now) == "3 Mar 25"
+print("tui data ok")
+
+# the TUI itself, driven headless against a fake backend: archive + undo, then send a mail
+try:
+    from homer import tui
+except ModuleNotFoundError:
+    print("tui skipped: Textual not installed")
+else:
+    with tempfile.TemporaryDirectory() as tmp:
+        store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
+        tui.DRAFTS, tui.SEND_DELAY = Path(tmp) / "drafts", 1
+        box = {"INBOX": [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)],
+               "Sent": [], "All": [], "Trash": []}
+        done = []
+
+        def move(n, a, folder, refs, dest):
+            done.append((folder, dest))
+            box[dest] += [{**m, "folder": dest, "id": m["id"] + "0"} for m in box[folder] if m["id"] in refs]
+            box[folder] = [m for m in box[folder] if m["id"] not in refs]
+            return [r + "0" for r in refs]
+
+        fake = types.SimpleNamespace(
+            special_folders=lambda n, a: {r"\Inbox": "INBOX", r"\Sent": "Sent", r"\All": "All", r"\Trash": "Trash"},
+            summaries=lambda n, a, f, k, q=None: [dict(m) for m in box[f]], move=move, mark=lambda *a: None,
+            fetch_raw=lambda n, a, f, ref: orig.as_bytes(), send=lambda n, a, msg, rcpts: done.append(msg))
+        tui.BACKENDS = {"gmail": fake}
+
+        async def drive():
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                await pilot.press("e")
+                await pilot.pause(0.3)
+                assert app.screen.convs == [] and done == [("INBOX", "All")]
+                await pilot.press("u")
+                await pilot.pause(0.5)
+                assert done[-1] == ("All", "INBOX") and len(app.screen.convs) == 1
+                await pilot.press("c")
+                await pilot.pause(0.3)
+                await pilot.press(*"bob@x.com", "tab", "tab", "tab", *"Hi")
+                app.screen.st["text"] = "hello"  # stands in for $EDITOR
+                await pilot.press("ctrl+s")
+                await pilot.pause(0.3)
+                assert isinstance(app.screen, tui.MainScreen), str(app.screen.query_one(tui.Status).render())
+                assert app.screen.convs[0]["out"]["state"] == "wait"
+                await pilot.pause(2)
+                sent = done[-1]
+                assert sent["To"] == "bob@x.com" and sent["Subject"] == "Hi"
+                assert sent.get_body(("plain",)).get_content().rstrip().endswith(store.FOOTER_TEXT)
+                assert str(app.screen.query_one(tui.Status).render()).startswith('✓ Sent "Hi" to bob@x.com')
+
+        asyncio.run(drive())
+        print("tui ok")
