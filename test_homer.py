@@ -41,6 +41,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert parsed.get_body(("plain",)).get_content().strip() == "Hi\nhomer"
     assert [p.get_filename() for p in homer.attachments(parsed)] == ["report.pdf"]
 
+from homer.tui import parse_draft  # noqa: E402
+d = parse_draft("To: a@x.com, \"Doe, Jane\" <j@x.com>\nCc:\nSubject: Hi, all\nAttach: ~/a.pdf, b.txt\n\nline 1\n\nline 2\n")
+assert d["to"] == ["a@x.com", "\"Doe, Jane\" <j@x.com>"] and d["cc"] == [] and d["subject"] == "Hi, all"
+assert d["attach"] == [str(Path("~/a.pdf").expanduser()), "b.txt"] and d["body"] == "line 1\n\nline 2"
+assert parse_draft("To: \nSubject: \nAttach: \n\n")["body"] == ""  # untouched template = discard
+assert parse_draft("Attach: \n\nthanks!")["to"] == []  # reply template
 assert homer.html_to_text("<style>x{}</style><p>Hi&nbsp;there</p><p>bye</p>") == "Hi there\nbye"
 print("ok")
 

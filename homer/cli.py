@@ -101,6 +101,12 @@ def cmd_reply(a, cfg):
         print(f"replied from {acct['email']} to {', '.join(rcpts)}: {msg['Subject']}")
 
 
+def cmd_tui(a, cfg):
+    name, _, _ = account(cfg, a)
+    from . import tui  # curses loads only for the TUI
+    tui.main(cfg, name)
+
+
 def cmd_mkdir(a, cfg):
     name, acct, backend = account(cfg, a)
     backend.mkdir(name, acct, a.folder)
@@ -164,6 +170,8 @@ def main():
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
     p.add_argument("--html", action="store_true", help="reply text is HTML (a plain-text copy is added)")
     p.set_defaults(fn=cmd_reply)
+
+    sub.add_parser("tui", parents=[common], help="browse and manage mail interactively").set_defaults(fn=cmd_tui)
 
     p = sub.add_parser("mkdir", parents=[common], help="create a folder (Gmail: a label)")
     p.add_argument("folder")
