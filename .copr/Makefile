@@ -5,7 +5,8 @@ version = $(shell sed -n 's/^Version: *//p' $(top)/homer.spec)
 outdir ?= $(top)/build/srpm
 
 srpm:
-	command -v rpmbuild >/dev/null || dnf -y install git python3-pip rpm-build
+	command -v git >/dev/null && command -v rpmbuild >/dev/null && python3 -m pip --version >/dev/null 2>&1 \
+	    || dnf -y install git python3-pip rpm-build
 	git config --global --add safe.directory '*'
 	mkdir -p $(outdir)
 	git -C $(top) archive --prefix=homer-$(version)/ -o $(outdir)/homer-$(version).tar.gz HEAD
