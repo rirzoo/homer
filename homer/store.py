@@ -15,7 +15,7 @@ HOMER_URL = "https://github.com/rirzoo/homer"
 FOOTER_TEXT = f"Sent with homer ({HOMER_URL})"
 FOOTER_HTML = f'<p>Sent with <a href="{HOMER_URL}">homer</a></p>'
 FOLDERS_FILE = CONFIG.parent / "folders.toml"
-NAMES_FILE = CONFIG.parent / "names.toml"  # what the TUI calls each account; the config key never changes
+STATE_FILE = CONFIG.parent / "tui.toml"  # choices made inside the TUI: the theme and account names
 CACHE = Path("~/.cache/homer/tui").expanduser()
 BASE = ("Mailbox", "Drafts", "Archive", "Trash")
 EDITABLE = ("Mailbox", "Archive")  # Drafts and Trash are found by homer (D4, W2)
@@ -97,17 +97,24 @@ def save_maps(maps):
     FOLDERS_FILE.write_text("\n".join(lines))
 
 
-def load_names():
+def load_state():
     try:
-        return tomllib.loads(NAMES_FILE.read_text())
+        return tomllib.loads(STATE_FILE.read_text())
     except FileNotFoundError:
         return {}
 
 
-def save_names(names):
-    NAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    NAMES_FILE.write_text("# Written by homer's TUI: the name shown for each account.\n" + "".join(
-        f"{json.dumps(k, ensure_ascii=False)} = {json.dumps(v, ensure_ascii=False)}\n" for k, v in names.items()))
+def save_state(state):
+    """theme = "nord", then [colors] (role -> style) and [names] (account config key -> name shown)."""
+    q = lambda v: json.dumps(v, ensure_ascii=False)  # JSON strings are valid TOML basic strings
+    lines = ["# Written by homer's TUI: the theme and colours (ctrl+t) and account names (R in the folder pane)."]
+    if state.get("theme"):
+        lines.append(f"theme = {q(state['theme'])}")
+    for table in ("colors", "names"):
+        if state.get(table):
+            lines += ["", f"[{table}]"] + [f"{q(k)} = {q(v)}" for k, v in state[table].items()]
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text("\n".join(lines) + "\n")
 
 
 def when_dt(when):

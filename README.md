@@ -39,6 +39,7 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
 - [TUI](#tui)
   - [Folders](#folders)
   - [Writing mail](#writing-mail)
+  - [Colours](#colours)
   - [Planned for the TUI](#planned-for-the-tui)
 - [Help & troubleshooting](#help--troubleshooting)
 - [Development](#development)
@@ -275,7 +276,7 @@ Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `
 
 Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. In that list `Space` or `Enter` ticks a folder and `s` saves. If you untick everything, Mailbox and Archive go back to their defaults, and a folder of your own stays but shows nothing. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
 
-`R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/names.toml`.
+`R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/tui.toml`.
 
 Newsletters often carry a plain-text copy full of tracking links and image placeholders. The TUI leaves those out, counts the links (`o` picks one) and lists only real attachments. A mail with images or heavy formatting says so above its text, and `v` shows it in your browser the way it was sent.
 
@@ -289,7 +290,11 @@ A sent mail appears at the top of Mailbox with a 10-second countdown, during whi
 
 ### Colours
 
-Unread mail is marked `●`, and mail you sent is marked `→` with the recipient in the `sent` colour. When you've replied in a conversation, its mail count `(3)` takes the `thread` colour. In a conversation, your own mails have a bar down their left side. You can change the colours in the config file:
+Unread mail is marked `●` and its sender is in the `unread` colour. Mail you sent is marked `→`, with the recipient in the `sent` colour. When you've replied in a conversation, its mail count `(3)` takes the `thread` colour. In a conversation, your own mails have a bar down their left side.
+
+`ctrl+t` opens the theme and colour screen from anywhere in the TUI. The list on the left shows each theme's colours on its own background. Beside it, a sample mailbox and conversation are drawn the way Homer draws your mail, and each theme applies as the cursor reaches it. `Tab` moves to the colour list. There `←` `→` step a colour through the theme's palette (primary, secondary, accent, success, warning, error, foreground, or none), `b` `i` `d` toggle bold, italic and dim, and `x` puts the default back. `Enter` keeps it all and `Esc` puts back what you had.
+
+Homer stores each colour as the theme's name for it, such as `$accent`, so when you switch themes every role takes the new theme's version of that colour. Your picks go to `~/.config/homer/tui.toml`. You can also set the theme and colours by hand in the config file, and what you pick with `ctrl+t` wins over it:
 
 ```toml
 [tui]
@@ -301,10 +306,10 @@ sent     = "$success"
 thread   = "$success"
 me       = "bold $accent"
 quote    = "dim"
-selected = "bold #ffcc00"
+selected = "bold $warning"
 ```
 
-Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). `$primary`, `$accent`, `$success` and `$warning` are the theme's own colours, which is also what the defaults above use. If an entry doesn't parse, Homer keeps the default for it and says so in the status line.
+Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). A fixed colour like `#ffcc00` also works, but it stays the same in every theme. If an entry doesn't parse, Homer keeps the default for it and says so in the status line.
 
 ### Planned for the TUI
 

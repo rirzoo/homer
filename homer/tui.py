@@ -9,7 +9,8 @@ import shlex
 import subprocess
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from email.utils import formataddr, getaddresses
 from pathlib import Path
 
@@ -56,6 +57,7 @@ Find      /  search (Tab inside it: this folder or all folders)
           before:2026-10-01 after:2026-09-01 and plain words
 Go        f folders and accounts
 View      T conversations or single mails   + 50 older   ctrl+r sync now
+          ctrl+t theme and colours, with a sample to judge them by
 Quit      q""",
     "reader": """\
 Scroll    j k  space b   g G top/bottom
@@ -155,6 +157,28 @@ def open_in_browser(msg):
 
 def loc(acct, m):
     return acct.name, m["folder"], m["id"]
+
+
+def list_row(c, width, me, selected=False):
+    """One conversation as a list row: marks, who, count, subject, date (W1)."""
+    out = c.get("out")
+    t = Text(no_wrap=True, overflow="ellipsis")
+    t.append("■" if selected else " ", STYLE["selected"])
+    mark, style = (OUT_MARK[out["state"]] if out else ("●", STYLE["unread"]) if c["unread"]
+                   else ("→", STYLE["sent"]) if c["mine"] else (" ", ""))
+    t.append(mark + " ", style)
+    w = 20 if width >= 70 else 14
+    n = len(c["msgs"])
+    count = f" ({n})" if n > 1 else ""
+    who = STYLE["sent"] if c["mine"] else STYLE["unread"] if c["unread"] else ""
+    t.append(fit(c["who"], w - len(count)), who)  # the count never gets cut
+    replied = not c["mine"] and any(m["addr"].lower() in me for m in c["msgs"])
+    t.append(count, STYLE["thread"] if replied else who)  # coloured when you're in the conversation
+    t.append(" + " if c["attach"] else "   ", "dim")
+    date = (f"{out['left']}s" if out["state"] == "wait" else "now") if out else store.short_when(c["when"])
+    t.append(fit(c["subject"] or "(no subject)", max(4, width - w - 13)), "bold" if c["unread"] else "")
+    t.append(" " + date.rjust(6), "dim")
+    return t
 
 
 def conv_blocks(conv, acct, raws, opened, width, full=False, cursor=None):
@@ -494,24 +518,7 @@ class MainScreen(Screen):
         return top[::-1] + convs
 
     def row(self, c, width):
-        out = c.get("out")
-        t = Text(no_wrap=True, overflow="ellipsis")
-        t.append("■" if c["key"] in self.selected else " ", STYLE["selected"])
-        mark, style = (OUT_MARK[out["state"]] if out else ("●", STYLE["unread"]) if c["unread"]
-                       else ("→", STYLE["sent"]) if c["mine"] else (" ", ""))
-        t.append(mark + " ", style)
-        w = 20 if width >= 70 else 14
-        n = len(c["msgs"])
-        count = f" ({n})" if n > 1 else ""
-        who = STYLE["sent"] if c["mine"] else "bold" if c["unread"] else ""
-        t.append(fit(c["who"], w - len(count)), who)  # the count never gets cut
-        replied = not c["mine"] and any(m["addr"].lower() in self.acct.me for m in c["msgs"])
-        t.append(count, STYLE["thread"] if replied else who)  # coloured when you're in the conversation
-        t.append(" + " if c["attach"] else "   ", "dim")
-        date = (f"{out['left']}s" if out["state"] == "wait" else "now") if out else store.short_when(c["when"])
-        t.append(fit(c["subject"] or "(no subject)", max(4, width - w - 13)), "bold" if c["unread"] else "")
-        t.append(" " + date.rjust(6), "dim")
-        return t
+        return list_row(c, width, self.acct.me, c["key"] in self.selected)
 
     def list_width(self):
         return self.query_one("#list", MailList).scrollable_content_region.width or 80
@@ -1038,8 +1045,8 @@ class MainScreen(Screen):
             if name is None:
                 return
             old, acct.label = acct.label, name or acct.name
-            names = {a.name: a.label for a in self.app.accounts.values() if a.label != a.name}
-            store.save_names(names)
+            self.app.state["names"] = {a.name: a.label for a in self.app.accounts.values() if a.label != a.name}
+            store.save_state(self.app.state)
             self.fill_pane()
             self.paint_header()
             self.say(f"Renamed {old} to {acct.label}")
@@ -1865,6 +1872,160 @@ class QuitScreen(Box):
         self.app.call_from_thread(self.app.exit, None, 0, "\n".join(notes) or None)
 
 
+# --- theme and colours (ctrl+t) ------------------------------------------------------------------------
+
+PALETTE = ("primary", "secondary", "accent", "success", "warning", "error", "foreground")  # every theme has these
+MODS = ("bold", "dim", "italic", "underline")
+ROLE_SAMPLE = {"unread": "● Kavitha Das", "sent": "→ To Amit", "thread": "(3)", "me": "▌ me → Kavitha",
+               "quote": "> quoted text", "selected": "■"}
+SAMPLE_ME = "arjun@example.com"
+
+
+def split_style(style):
+    words = style.split()
+    return [w for w in words if w in MODS], next((w for w in words if w not in MODS), "")
+
+
+def sample_mail():
+    """A made-up mailbox for the theme screen, drawn by the same code as the real list and preview."""
+    now = datetime.now(timezone.utc)
+
+    def mail(i, addr, name, thread, mins, subject, body, unread=False, to=("Kavitha Das", "kavitha@example.com")):
+        m = EmailMessage()
+        m.set_content(body)
+        return {"id": str(i), "folder": "INBOX", "unread": unread, "name": name, "addr": addr, "to": [list(to)],
+                "when": (now - timedelta(minutes=mins)).isoformat(), "subject": subject, "msgid": f"<{i}@s>",
+                "thread": thread, "attach": i == 1, "labels": []}, m
+
+    rows = [mail(1, "kavitha@example.com", "Kavitha Das", "t1", 900, "Trip schedule",
+                 "Hi Arjun,\n\nThe schedule is out. We leave on the 19th.", to=("", SAMPLE_ME)),
+            mail(2, SAMPLE_ME, "", "t1", 600, "Re: Trip schedule",
+                 "Sounds good, see you then.\n\n> The schedule is out. We leave on the 19th."),
+            mail(3, "kavitha@example.com", "Kavitha Das", "t1", 30, "Re: Trip schedule",
+                 "Great, booking the hotel now.", unread=True, to=("", SAMPLE_ME)),
+            mail(4, SAMPLE_ME, "", "t2", 3000, "Re: Rent", "Paid, thanks!", to=("Amit", "amit@example.com")),
+            mail(5, "rahul@example.com", "Rahul", "t3", 6000, "Books due Friday", "Two books are due.",
+                 to=("", SAMPLE_ME))]
+    acct = type("Sample", (), {"name": "sample", "me": {SAMPLE_ME}})
+    return store.conversations([m for m, _ in rows], acct.me), {loc(acct, m): raw for m, raw in rows}, acct
+
+
+class RoleList(NoWrap):
+    BINDINGS = [Binding("left", "screen.shade(-1)", "colour", key_display="← →"),
+                Binding("right", "screen.shade(1)", show=False),
+                Binding("b", "screen.mod('bold')", "bold"), Binding("i", "screen.mod('italic')", "italic"),
+                Binding("d", "screen.mod('dim')", "dim"), Binding("x", "screen.reset", "default"),
+                Binding("j", "cursor_down", show=False), Binding("k", "cursor_up", show=False)]
+
+
+class LookScreen(Screen):
+    """Themes and colour roles beside a sample mailbox painted in them. Roles take the theme's own colours
+    ($accent …), so they follow every theme. Enter keeps it all, Esc puts back what you had."""
+    BINDINGS = [Binding("tab", "switch", "themes / colours", priority=True),
+                Binding("enter", "save", "save", priority=True), Binding("escape", "dismiss(None)", "cancel")]
+
+    def __init__(self, theme, colors):
+        super().__init__()
+        self.pick, self.draft = theme, dict(colors)
+        self.convs, self.raws, self.acct = sample_mail()
+
+    def compose(self):
+        yield Header(id="lookhead")
+        with Horizontal(id="look"):
+            with Vertical(id="lookleft"):
+                yield Static(Text("Theme", "bold"), classes="looktitle")
+                yield MailList(*[Option(self.swatch(n), id=n) for n in sorted(self.app.available_themes)],
+                               id="themes")
+                yield Static(Text("Colours", "bold"), classes="looktitle")
+                yield RoleList(id="roles")
+            with Vertical(id="sample"):
+                yield Header(id="samplehead")
+                with Horizontal(id="samplebody"):
+                    yield OptionList(id="samplelist")
+                    yield ConvView(id="sampleconv")
+        yield Status()
+        yield Footer()
+
+    def swatch(self, name):
+        """A theme's name with its colours on its own background, readable before you move onto it."""
+        v = self.app.available_themes[name].to_color_system().generate()
+        t = Text(f"{name:<20}")
+        for c in ("primary", "accent", "success", "warning", "error"):
+            t.append(" ●", f"{v[c]} on {v['background']}".replace("ansi_", ""))
+        return t.append(" ", f"on {v['background']}".replace("ansi_", ""))
+
+    def on_mount(self):
+        self.query_one("#lookhead", Header).set("homer · theme and colours")
+        self.query_one("#samplehead", Header).set("homer · gmail · Mailbox", "1 unread · synced just now")
+        for w in (self.query_one("#samplelist"), self.query_one("#sampleconv")):
+            w.can_focus = False  # a picture of homer, not a second homer
+        themes = self.query_one("#themes", MailList)
+        themes.highlighted = themes.get_option_index(self.pick)
+        themes.focus()
+        self.call_after_refresh(self.repaint)
+
+    @on(OptionList.OptionHighlighted, "#themes")
+    def try_theme(self, event):
+        self.pick = event.option.id
+        self.repaint()
+
+    def repaint(self):
+        self.app.paint_roles(self.pick, self.draft)
+        roles = self.query_one("#roles", RoleList)
+        at = roles.highlighted or 0
+        lines = []
+        for role in ROLES:
+            mods, colour = split_style(self.draft[role])
+            t = Text(f" {role:<9}")
+            t.append(ROLE_SAMPLE[role], STYLE[role])
+            t.append("   " + (" ".join(mods + ([colour.lstrip("$")] if colour else [])) or "plain"), "dim")
+            lines.append(Option(t, id=role))
+        roles.set_options(lines)
+        roles.highlighted = at
+        lst = self.query_one("#samplelist", OptionList)
+        width = lst.scrollable_content_region.width or 50
+        lst.set_options([Option(list_row(c, width, self.acct.me, selected=c["key"] == "t3")) for c in self.convs])
+        lst.highlighted = 0
+        view = self.query_one("#sampleconv", ConvView)
+        conv = self.convs[0]
+        view.render_blocks(conv_blocks(conv, self.acct, self.raws, set(range(len(conv["msgs"]))),
+                                       view.scrollable_content_region.width or 40)[0])
+        self.query_one(Status).say(f"{self.pick} · Tab moves between themes and colours; colours come from "
+                                   "the theme, so they change with it")
+
+    def role(self):
+        roles = self.query_one("#roles", RoleList)
+        return list(ROLES)[roles.highlighted or 0]
+
+    def action_switch(self):
+        themes, roles = self.query_one("#themes"), self.query_one("#roles")
+        (roles if themes.has_focus else themes).focus()
+
+    def action_shade(self, d):
+        """Step through the theme's colours (and "no colour") for the role under the cursor."""
+        role = self.role()
+        mods, colour = split_style(self.draft[role])
+        names = list(PALETTE) + [""]
+        i = names.index(colour[1:]) if colour[1:] in PALETTE else (len(names) - 1 if not colour else -1)
+        new = names[(i + d) % len(names)]
+        self.draft[role] = " ".join(mods + (["$" + new] if new else []))
+        self.repaint()
+
+    def action_mod(self, mod):
+        role = self.role()
+        mods, colour = split_style(self.draft[role])
+        mods = [m for m in mods if m != mod] if mod in mods else mods + [mod]
+        self.draft[role] = " ".join(mods + ([colour] if colour else []))
+        self.repaint()
+
+    def action_reset(self):
+        self.draft[self.role()] = ROLES[self.role()]
+        self.repaint()
+
+    def action_save(self):
+        self.dismiss((self.pick, self.draft))
+
+
 # --- homer folder mapping (W16) ----------------------------------------------------------------------
 
 class Ticks(SelectionList):
@@ -1961,7 +2122,8 @@ class NoAccounts(Screen):
 class Homer(App):
     TITLE = "homer"
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS = [Binding("ctrl+q", "safe_quit", show=False, priority=True)]
+    BINDINGS = [Binding("ctrl+q", "safe_quit", show=False, priority=True),
+                Binding("ctrl+t", "pick_theme", show=False)]
     CSS = """
     Screen { background: $background; }
     Header { height: 1; background: $panel; }
@@ -2005,29 +2167,50 @@ class Homer(App):
     .box OptionList, .box SelectionList { height: auto; max-height: 14; }
     #srcs { height: 1fr; }
     #explain, #mkdir { padding: 1 1 0 1; height: auto; }
+    /* a tinted cursor, not a solid $primary bar, so the colour roles stay readable on the row it's on */
+    #list > .option-list--option-highlighted, #roles > .option-list--option-highlighted {
+        color: $foreground; background: $primary 15%; }
+    #list:focus > .option-list--option-highlighted, #roles:focus > .option-list--option-highlighted,
+    #samplelist > .option-list--option-highlighted { color: $foreground; background: $primary 30%; }
+    #look { height: 1fr; }
+    #lookleft { width: 44; border-right: solid $panel-lighten-2; }
+    .looktitle { padding: 1 1 0 1; color: $text-muted; }
+    #themes { height: 1fr; }
+    #roles { height: auto; }
+    #sample { width: 1fr; }
+    #samplebody { height: 1fr; }
+    #samplelist { width: 3fr; }
+    #sampleconv { width: 2fr; border-left: solid $panel-lighten-2; padding: 0 1; }
     """
 
     def __init__(self, cfg, name):
         super().__init__()
-        maps, names = store.load_maps(), store.load_names()
+        maps, self.state = store.load_maps(), store.load_state()
+        names = self.state.get("names", {})
         self.accounts = {n: store.Account(n, a, BACKENDS[a.get("provider", "gmail")], maps, names.get(n))
                          for n, a in cfg.get("accounts", {}).items() if a.get("provider", "gmail") in BACKENDS}
         self.first, self.outbox, self.look, self.config_note = name, [], cfg.get("tui", {}), ""
 
-    def paint_roles(self):
-        """[tui] theme and [tui.colors] from the config; a bad entry keeps the default and is reported."""
+    def colors(self):
+        """Role styles as written: what you set with ctrl+t, else [tui.colors] in the config, else the default."""
+        return {**ROLES, **self.look.get("colors", {}), **self.state.get("colors", {})}
+
+    def paint_roles(self, theme=None, colors=None):
+        """Apply a theme and resolve the role styles against it, so $accent is that theme's accent. Bad
+        entries keep the default and are reported."""
         bad = []
-        theme = self.look.get("theme")
+        theme = theme or self.state.get("theme") or self.look.get("theme")
         if theme in self.available_themes:
             self.theme = theme
         elif theme:
             bad.append(f"theme {theme}")
         css = self.get_css_variables()
+        colors = colors or self.colors()
         for role, default in ROLES.items():
-            for style in (self.look.get("colors", {}).get(role), default):
+            for style in (colors.get(role), default):
                 if not isinstance(style, str):
                     continue
-                style = re.sub(r"\$([\w-]+)", lambda m: css.get(m[1], m[0]), style)
+                style = re.sub(r"\$([\w-]+)", lambda m: css.get(m[1], m[0]).removeprefix("ansi_"), style)
                 try:
                     Style.parse(style)
                 except StyleSyntaxError:
@@ -2045,6 +2228,33 @@ class Homer(App):
             self.push_screen(MainScreen(self.accounts.get(self.first) or next(iter(self.accounts.values()))))
         else:
             self.push_screen(NoAccounts())
+
+    def repaint_all(self):
+        """Redraw the rows and mails, whose colours were resolved against the old theme."""
+        for s in self.screen_stack:
+            if isinstance(s, MainScreen):
+                s.rebuild()
+                s.preview()
+                if s.has_class("panes"):
+                    s.fill_pane()
+            elif isinstance(s, ReaderScreen):
+                s.paint()
+
+    def action_pick_theme(self):
+        if isinstance(self.screen, LookScreen):
+            return
+
+        def done(result):
+            if result:
+                theme, colors = result
+                base = {**ROLES, **self.look.get("colors", {})}
+                self.state["theme"] = theme
+                self.state["colors"] = {r: v for r, v in colors.items() if v != base.get(r)}
+                store.save_state(self.state)
+            self.paint_roles()
+            self.repaint_all()
+
+        self.push_screen(LookScreen(self.theme, self.colors()), done)
 
     def action_safe_quit(self):
         main = next((s for s in self.screen_stack if isinstance(s, MainScreen)), None)
