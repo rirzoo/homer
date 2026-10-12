@@ -267,7 +267,7 @@ assert store.strip_footer(plain) == "Hi <Bob>,\n\nsee https://x.com/a."
 r = store.build_outgoing({"email": "me@example.com"}, "reply", orig, ["Bob <bob@x.com>"], [], ["z@x.com"],
                          "Re: Plans", "Sure", [])
 text = r.get_body(("plain",)).get_content()
-assert text.index("Sent with homer (") < text.index("wrote:")  # footer ends your text, quote below (ISSUES.md I1)
+assert text.index("Sent with homer (") < text.index("wrote:")  # footer ends your text, quote below (docs/ISSUES.md I1)
 assert store.FOOTER_HTML in r.get_body(("html",)).get_content() and r["Bcc"] == "z@x.com"
 assert r["In-Reply-To"] == "<m2@x.com>" and r["To"] == "Bob <bob@x.com>"
 

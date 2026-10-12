@@ -1,5 +1,5 @@
 """Data side of the TUI, kept free of Textual so it can be tested: homer folders, conversations, cache,
-contacts and the mail homer sends. Design notes are in TUI.md (folder model) and FRAME.md (D-numbers)."""
+contacts and the mail homer sends. Design notes are in docs/TUI.md (folder model) and docs/FRAME.md (D-numbers)."""
 import json
 import re
 import tomllib
@@ -75,7 +75,7 @@ def reply_recipients(acct, orig, everyone):
     return [[str(a) for a in msg[h].addresses] if msg[h] else [] for h in ("To", "Cc")]
 
 
-# --- homer folders (TUI.md, "The folder model") ---------------------------------------------------
+# --- homer folders (docs/TUI.md, "The folder model") ---------------------------------------------------
 
 def load_maps():
     try:
@@ -244,7 +244,7 @@ def conversations(msgs, me, single=False):
     return out
 
 
-# --- dates (FRAME.md, "Dates") ------------------------------------------------------------------
+# --- dates (docs/FRAME.md, "Dates") ------------------------------------------------------------------
 
 def short_when(dt, now=None):
     now = (now or datetime.now(timezone.utc)).astimezone()

@@ -291,7 +291,7 @@ You can add your contacts' addresses and a signature to the same file. Codex and
 
 ## TUI
 
-`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with Homer. [TUI.md](TUI.md) explains how it's meant to be used and what it can't do, and [FRAME.md](FRAME.md) has a wireframe of every window with the reasons behind each choice.
+`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with Homer.
 
 The screen has two panes: your mail on the left and the conversation under the cursor on the right. `f` opens a third pane on the left with your folders and your other accounts, and closes again once you pick one. A row is a whole conversation, so your replies sit next to the mail they answer (`T` switches to one row per mail). Below 100 columns you get one pane at a time.
 
