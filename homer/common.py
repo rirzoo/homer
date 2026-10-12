@@ -1,5 +1,6 @@
 """Shared bits: config, keyring secrets, and building/parsing messages."""
 import email.utils
+import json
 import mimetypes
 import os
 import re
@@ -7,6 +8,9 @@ import shlex
 import subprocess
 import sys
 import tomllib
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import date
 from email.message import EmailMessage
 from html import escape
@@ -51,6 +55,29 @@ def secret_get(name, kind):
 def secret_set(name, kind, value):
     _secret_tool(["store", "--label", f"homer {name} {kind}", "service", "homer", "account", name, "kind", kind],
                  input=value, check=True)
+
+
+# --- HTTP (OAuth token endpoints and the rules/filters APIs) -----------------
+
+def post_form(url, data):
+    """POST a form to an OAuth token endpoint; returns the JSON reply, error replies included."""
+    try:
+        with urllib.request.urlopen(url, urllib.parse.urlencode(data).encode(), timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        return json.load(e)
+
+
+def http_json(url, token, data=None, method=None):
+    """JSON request with a bearer token; returns the parsed reply (None if empty). HTTP errors die with the server's text."""
+    req = urllib.request.Request(url, None if data is None else json.dumps(data).encode(), method=method,
+                                 headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            body = r.read()
+    except urllib.error.HTTPError as e:
+        die(f"{urllib.parse.urlsplit(url).hostname} {e.code}: {e.read().decode(errors='replace')[:400]}")
+    return json.loads(body) if body else None
 
 
 # --- messages ---------------------------------------------------------------

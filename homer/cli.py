@@ -31,8 +31,8 @@ def cmd_accounts(a, cfg):
 
 def cmd_login(a, cfg):
     name, acct, backend = account(cfg, a)
-    backend.login(name, acct)
-    print(f"ok: {name} logged in")
+    backend.login(name, acct, rules=a.rules)
+    print(f"ok: {name} logged in{' (rules too)' if a.rules else ''}")
 
 
 def cmd_folders(a, cfg):
@@ -144,6 +144,42 @@ def cmd_mark(a, cfg):
     print(f"marked {len(a.ids)} message(s) {a.state}")
 
 
+RULE_KEYS = ("name", "from", "to", "subject", "has", "move", "archive", "read", "delete", "forward")
+
+
+def describe_rule(r):
+    cond = [f"{k}: {' or '.join(r[k])}" for k in ("from", "to", "subject", "has") if r[k]]
+    act = ([f"move to {r['move']}"] if r["move"] else []) + [f"label {x}" for x in r["label"]] + \
+          (["archive"] if r["archive"] else []) + \
+          (["mark read"] if r["read"] else []) + (["delete"] if r["delete"] else []) + \
+          [f"forward to {x}" for x in r["forward"]]
+    return f"{', '.join(cond) or 'all mail'} -> {', '.join(act) or 'nothing'}{' (+ more)' if r['other'] else ''}"
+
+
+def cmd_rules(a, cfg):
+    name, acct, backend = account(cfg, a)
+    if a.action in (None, "list"):
+        for r in backend.rules_list(name, acct):
+            label = (r["name"] or "-") + ("" if r["enabled"] else " (off)")
+            print(f"{r['id']}  {label}  {describe_rule(r)}")
+    elif a.action == "rm":
+        for rid in a.ids:
+            backend.rm_rule(name, acct, rid)
+        print(f"removed {len(a.ids)} rule(s)")
+    else:
+        changes = {k: getattr(a, k.replace("from", "frm")) for k in RULE_KEYS}
+        if a.action == "add":
+            if not any(changes[k] for k in ("from", "to", "subject", "has")):
+                die("give at least one of --from, --to, --subject, --has")
+            if not any(changes[k] for k in ("move", "archive", "read", "delete", "forward")):
+                die("give at least one of --move, --archive, --read, --delete, --forward")
+            print(f"added rule {backend.add_rule(name, acct, changes)}")
+        else:
+            if all(v is None for v in changes.values()):
+                die("nothing to change")
+            print(f"updated rule {backend.edit_rule(name, acct, a.id, changes)}")
+
+
 def main():
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `homer read ... | head` exits quietly
     common = argparse.ArgumentParser(add_help=False)
@@ -155,7 +191,9 @@ def main():
     ap = argparse.ArgumentParser(prog="homer", description="multi-account mail CLI (Gmail/IMAP, Microsoft 365)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("accounts", help="list configured accounts").set_defaults(fn=cmd_accounts)
-    sub.add_parser("login", parents=[common], help="store app password / OAuth sign-in").set_defaults(fn=cmd_login)
+    p = sub.add_parser("login", parents=[common], help="store app password / OAuth sign-in")
+    p.add_argument("--rules", action="store_true", help="also grant access to rules/filters (Gmail: Google sign-in)")
+    p.set_defaults(fn=cmd_login)
     sub.add_parser("folders", parents=[common], help="list mail folders").set_defaults(fn=cmd_folders)
 
     p = sub.add_parser("list", parents=[common, folder], help="list messages, newest first")
@@ -217,6 +255,32 @@ def main():
     p.add_argument("state", choices=["read", "unread"])
     p.add_argument("ids", nargs="+", help=id_help)
     p.set_defaults(fn=cmd_mark)
+
+    p = sub.add_parser("rules", parents=[common], help="list, add, edit or remove server-side rules (Gmail filters)")
+    p.set_defaults(fn=cmd_rules)
+    acts = p.add_subparsers(dest="action", metavar="{list,add,edit,rm}")
+    leaf = argparse.ArgumentParser(add_help=False)  # SUPPRESS: `homer rules -a X add` keeps the -a given before add
+    leaf.add_argument("-a", "--account", default=argparse.SUPPRESS, help="account name from config")
+    acts.add_parser("list", parents=[leaf], help="list rules (the default)")
+    fields = argparse.ArgumentParser(add_help=False)
+    fields.add_argument("--name", help="rule name (Outlook only; Gmail filters have none)")
+    g = fields.add_argument_group("conditions (repeat a flag to match any of its values)")
+    g.add_argument("--from", dest="frm", action="append", metavar="ADDR", help="sender contains")
+    g.add_argument("--to", action="append", metavar="ADDR", help="recipients contain")
+    g.add_argument("--subject", action="append", metavar="TEXT", help="subject contains")
+    g.add_argument("--has", action="append", metavar="TEXT", help="Gmail: matches a search; Outlook: body or subject contains")
+    g = fields.add_argument_group("actions")
+    x = g.add_mutually_exclusive_group()
+    x.add_argument("--move", metavar="FOLDER", help="move to FOLDER (Gmail: label it and skip the inbox)")
+    x.add_argument("--archive", action="store_true", default=None, help="skip the inbox (Outlook: move to Archive)")
+    g.add_argument("--read", action=argparse.BooleanOptionalAction, help="mark read")
+    g.add_argument("--delete", action=argparse.BooleanOptionalAction, help="move to Trash / Deleted Items")
+    g.add_argument("--forward", action="append", metavar="ADDR", help="forward to ADDR (Gmail: one verified address)")
+    acts.add_parser("add", parents=[leaf, fields], help="add a rule")
+    q = acts.add_parser("edit", parents=[leaf, fields], help="change a rule; flags you leave out stay as they are")
+    q.add_argument("id", help="rule id from `homer rules`")
+    q = acts.add_parser("rm", parents=[leaf], help="remove rules")
+    q.add_argument("ids", nargs="+", help="rule ids from `homer rules`")
 
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-a", "--account") or argv[0].startswith("--account="):

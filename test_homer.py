@@ -277,6 +277,41 @@ assert store.short_when(datetime(2026, 3, 3, 6, 0, tzinfo=timezone.utc), now) ==
 assert store.short_when(datetime(2025, 3, 3, 6, 0, tzinfo=timezone.utc), now) == "3 Mar 25"
 print("tui data ok")
 
+# rules: native <-> Homer's rule dict, and edits keep the parts Homer doesn't model
+from homer import cli  # noqa: E402
+
+blank = dict.fromkeys(cli.RULE_KEYS)
+pascal = {"Id": "R1", "DisplayName": "tpc", "IsEnabled": True,
+          "Conditions": {"FromAddresses": [{"EmailAddress": {"Address": "tpc@x.com"}}], "HasAttachments": True},
+          "Actions": {"MoveToFolder": "F1", "StopProcessingRules": True}}
+ol = outlook._recase(pascal, str.lower)
+assert outlook._recase(ol, str.upper) == pascal and ol["conditions"]["fromAddresses"][0]["emailAddress"]["address"]
+r = outlook._rule(ol, {"F1": "Placements"}.get)
+assert (r["from"], r["move"], r["read"], r["other"]) == (["tpc@x.com"], "Placements", False, True)
+assert cli.describe_rule(r) == "from: tpc@x.com -> move to Placements (+ more)"
+n = outlook._native({**blank, "from": ["cell@x.com"], "read": True}, ol)
+assert n["conditions"] == {"senderContains": ["cell@x.com"], "hasAttachments": True}  # address form replaced, rest kept
+assert n["actions"] == {"moveToFolder": "F1", "stopProcessingRules": True, "markAsRead": True}
+assert ol["conditions"]["fromAddresses"]  # base left untouched
+n = outlook._native({**blank, "archive": True, "forward": ["a@x.com"]}, folder_id=lambda f: "id-" + f)
+assert n["actions"] == {"moveToFolder": "id-archive", "forwardTo": [{"emailAddress": {"address": "a@x.com"}}]}
+
+gf = {"id": "G1", "criteria": {"from": "a@x.com OR b@x.com", "query": "invoice"},
+      "action": {"addLabelIds": ["Label_7", "STARRED"], "removeLabelIds": ["INBOX", "UNREAD"]}}
+r = gmail._rule(gf, {"Label_7": "Bills"}.get)
+assert (r["from"], r["has"], r["move"], r["archive"], r["read"], r["other"]) == (
+    ["a@x.com", "b@x.com"], ["invoice"], "Bills", False, True, True)  # STARRED counts as more
+r = gmail._rule({"id": "G2", "criteria": {"to": "me+x@x.com"}, "action": {"removeLabelIds": ["INBOX"]}})
+assert r["archive"] and not r["move"] and not r["other"]
+r = gmail._rule({"id": "G3", "criteria": {"from": "bank@x.com"}, "action": {"addLabelIds": ["Label_7"]}}, {"Label_7": "Bills"}.get)
+assert cli.describe_rule(r) == "from: bank@x.com -> label Bills"  # label only, mail stays in the inbox
+n = gmail._native({**blank, "move": "Bills", "read": False, "subject": ["due"]}, gf, {"Bills": "Label_9"}.get)
+assert n == {"criteria": {"from": "a@x.com OR b@x.com", "query": "invoice", "subject": "due"},
+             "action": {"addLabelIds": ["Label_9", "STARRED"], "removeLabelIds": ["INBOX"]}}  # old folder label swapped
+assert gmail._native({**blank, "from": ["z@x.com"], "delete": True}) == {
+    "criteria": {"from": "z@x.com"}, "action": {"addLabelIds": ["TRASH"]}}
+print("rules ok")
+
 # the TUI itself, driven headless against a fake backend: archive + undo, then send a mail
 try:
     from homer import tui

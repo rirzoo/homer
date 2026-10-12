@@ -1,17 +1,16 @@
 """Microsoft 365 / Outlook (e.g. institute mail) via Microsoft Graph, OAuth2 device-code login."""
 import base64
+import copy
 import http.client
 import json
 import sys
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from .common import die, secret_get, secret_set
+from .common import die, http_json, post_form, secret_get, secret_set
 
 GRAPH_HOST, GRAPH = "graph.microsoft.com", "/v1.0"
 DEFAULT_SCOPE = ("https://graph.microsoft.com/Mail.ReadWrite "
@@ -28,36 +27,39 @@ _folder_ids = {}  # (account name, folder) -> Graph folder id
 
 def _oauth(acct, endpoint, data):
     url = f"https://login.microsoftonline.com/{acct.get('tenant', 'organizations')}/oauth2/v2.0/{endpoint}"
-    body = urllib.parse.urlencode({"client_id": acct["client_id"], **data}).encode()
-    try:
-        with urllib.request.urlopen(url, body) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        return json.load(e)
+    return post_form(url, {"client_id": acct["client_id"], **data})
 
 
 def _scope(acct):
     return acct.get("scope", DEFAULT_SCOPE)
 
 
-_tokens = {}
+_tokens = {}  # account name (mail scope) or (name, scope) -> access token
+
+
+def _token(name, acct, scope):
+    """Access token for scope from the stored refresh token: (token, None), or (None, Microsoft's error text)."""
+    rt = secret_get(name, "refresh_token") or die(f"not logged in; run: homer login -a {name}")
+    tok = _oauth(acct, "token", {"grant_type": "refresh_token", "refresh_token": rt, "scope": scope})
+    if "access_token" not in tok:
+        return None, tok.get("error_description", tok)
+    if tok.get("refresh_token"):
+        secret_set(name, "refresh_token", tok["refresh_token"])
+    return tok["access_token"], None
 
 
 def access_token(name, acct):
-    if name in _tokens:
-        return _tokens[name]
-    rt = secret_get(name, "refresh_token") or die(f"not logged in; run: homer login -a {name}")
-    tok = _oauth(acct, "token", {"grant_type": "refresh_token", "refresh_token": rt, "scope": _scope(acct)})
-    if "access_token" not in tok:
-        die(f"{tok.get('error_description', tok)}\nrun: homer login -a {name}")
-    if tok.get("refresh_token"):
-        secret_set(name, "refresh_token", tok["refresh_token"])
-    _tokens[name] = tok["access_token"]
+    if name not in _tokens:
+        tok, err = _token(name, acct, _scope(acct))
+        _tokens[name] = tok or die(f"{err}\nrun: homer login -a {name}")
     return _tokens[name]
 
 
-def login(name, acct):
-    dc = _oauth(acct, "devicecode", {"scope": _scope(acct)})
+def login(name, acct, rules=False):
+    scope = _scope(acct)
+    if rules and ".default" not in scope:  # .default can't be mixed with named scopes; rules fall back without it
+        scope += " " + RULES_SCOPE
+    dc = _oauth(acct, "devicecode", {"scope": scope})
     if "device_code" not in dc:
         die(dc.get("error_description", dc))
     print(dc["message"], file=sys.stderr, flush=True)
@@ -73,7 +75,11 @@ def login(name, acct):
         elif tok.get("error") != "authorization_pending":
             die(tok.get("error_description", tok))
     secret_set(name, "refresh_token", tok["refresh_token"])
+    _tokens.clear()
+    _rules_apis.pop(name, None)
     _graph(name, acct, "/me/mailFolders/inbox?$select=id")  # prove the token can read mail
+    if rules:
+        rules_list(name, acct)  # and that it can read rules
 
 
 # --- Graph helpers ----------------------------------------------------------
@@ -258,3 +264,118 @@ def summaries(name, acct, folder, n, query=None):
                      "subject": m.get("subject") or "", "msgid": m.get("internetMessageId", ""),
                      "thread": m.get("conversationId", ""), "attach": m.get("hasAttachments", False), "labels": []})
     return rows
+
+
+# --- inbox rules ----------------------------------------------------------------
+
+RULES_SCOPE = "https://graph.microsoft.com/MailboxSettings.ReadWrite"
+_rules_apis = {}  # account name -> (rules url, token, pascal)
+_OL = {"from": "senderContains", "to": "recipientContains", "subject": "subjectContains", "has": "bodyOrSubjectContains"}
+_OL_ADDR = {"from": "fromAddresses", "to": "sentToAddresses"}  # exact-address forms Outlook's own rule editor makes
+_OL_ACTIONS = {"moveToFolder", "copyToFolder", "markAsRead", "delete", "forwardTo", "stopProcessingRules"}
+
+
+def _recase(obj, first):
+    """Recase every key's first letter: Outlook REST spells Graph's messageRule fields in PascalCase."""
+    if isinstance(obj, dict):
+        return {first(k[:1]) + k[1:]: _recase(v, first) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_recase(v, first) for v in obj]
+    return obj
+
+
+def _rules_api(name, acct):
+    """Graph needs MailboxSettings.ReadWrite for rules. Apps that can't get it (Microsoft's own clients only get
+    their preauthorized Graph scopes) can still reach rules through Outlook REST on the same sign-in."""
+    if name not in _rules_apis:
+        tok, err = _token(name, acct, RULES_SCOPE)
+        if tok:
+            _rules_apis[name] = (f"https://{GRAPH_HOST}{GRAPH}/me/mailFolders/inbox/messageRules", tok, False)
+        else:
+            # ponytail: Outlook REST v2 is deprecated; if Microsoft turns it off, these accounts lose rules until
+            # their app gets MailboxSettings.ReadWrite on Graph
+            tok, _ = _token(name, acct, "https://outlook.office365.com/.default")
+            if not tok:
+                die(f"{err}\nrules need the MailboxSettings.ReadWrite permission: add it to your app, "
+                    f"then run: homer login -a {name} --rules")
+            _rules_apis[name] = ("https://outlook.office365.com/api/v2.0/me/MailFolders/Inbox/MessageRules", tok, True)
+    return _rules_apis[name]
+
+
+def _rules_call(name, acct, rid="", data=None, method=None):
+    url, tok, pascal = _rules_api(name, acct)
+    if rid:
+        url += "/" + urllib.parse.quote(rid, safe="=")
+    out = http_json(url, tok, _recase(data, str.upper) if pascal else data, method)
+    return _recase(out, str.lower) if pascal else out
+
+
+def _real_folder_id(name, acct, folder):
+    fid = _folder_id(name, acct, folder)  # well-known names work in paths but not inside a rule
+    return json.loads(_graph(name, acct, f"/me/mailFolders/{fid}?$select=id"))["id"] if fid in WELL_KNOWN else fid
+
+
+def _folder_display(name, acct, fid):
+    try:
+        return json.loads(_graph(name, acct, f"/me/mailFolders/{urllib.parse.quote(fid)}?$select=displayName"))[
+            "displayName"]
+    except SystemExit:  # the folder was deleted after the rule was made
+        return fid
+
+
+def _rule(r, folder_name=lambda fid: fid):
+    """Outlook messageRule -> Homer's rule dict (same shape as gmail._rule)."""
+    c, a = r.get("conditions") or {}, r.get("actions") or {}
+    out = {"id": r["id"], "name": r.get("displayName", ""), "enabled": r.get("isEnabled", True), "archive": False,
+           **{k: list(c.get(f) or []) for k, f in _OL.items()}}
+    for k, f in _OL_ADDR.items():
+        out[k] += [x["emailAddress"]["address"] for x in c.get(f) or []]
+    out["move"] = folder_name(a["moveToFolder"]) if a.get("moveToFolder") else None
+    out["label"] = [folder_name(a["copyToFolder"])] if a.get("copyToFolder") else []  # a copy is Outlook's label
+    out["read"], out["delete"] = bool(a.get("markAsRead")), bool(a.get("delete"))
+    out["forward"] = [x["emailAddress"]["address"] for x in a.get("forwardTo") or []]
+    known = set(_OL.values()) | set(_OL_ADDR.values())
+    out["other"] = any(v for f, v in c.items() if f not in known) or any(v for f, v in a.items() if f not in _OL_ACTIONS)
+    return out
+
+
+def _native(changes, base=None, folder_id=lambda f: f):
+    """Apply Homer's rule changes (None = leave alone) to a messageRule, keeping everything Homer doesn't model."""
+    r = copy.deepcopy(base or {})
+    c, a = r.setdefault("conditions", {}), r.setdefault("actions", {})
+    if changes.get("name"):
+        r["displayName"] = changes["name"]
+    for k, f in _OL.items():
+        if changes.get(k) is not None:
+            c[f] = changes[k]
+            c.pop(_OL_ADDR.get(k), None)
+    dest = "archive" if changes.get("archive") else changes.get("move")
+    if dest:
+        a["moveToFolder"] = folder_id(dest)
+    for k, f in (("read", "markAsRead"), ("delete", "delete")):
+        if changes.get(k) is not None:
+            a[f] = changes[k]
+    if changes.get("forward") is not None:
+        a["forwardTo"] = [{"emailAddress": {"address": x}} for x in changes["forward"]]
+    return r
+
+
+def rules_list(name, acct):
+    return [_rule(r, lambda fid: _folder_display(name, acct, fid)) for r in _rules_call(name, acct)["value"]]
+
+
+def add_rule(name, acct, changes):
+    seq = max((r.get("sequence", 0) for r in _rules_call(name, acct)["value"]), default=0) + 1
+    r = _native(changes, folder_id=lambda f: _real_folder_id(name, acct, f))
+    r.setdefault("displayName", "Homer: " + ", ".join(v for k in _OL for v in changes.get(k) or [])[:60])
+    return _rules_call(name, acct, data={**r, "sequence": seq, "isEnabled": True})["id"]
+
+
+def edit_rule(name, acct, rid, changes):
+    r = _native(changes, _rules_call(name, acct, rid), lambda f: _real_folder_id(name, acct, f))
+    _rules_call(name, acct, rid, {k: r[k] for k in ("displayName", "conditions", "actions") if k in r}, "PATCH")
+    return rid
+
+
+def rm_rule(name, acct, rid):
+    _rules_call(name, acct, rid, method="DELETE")
