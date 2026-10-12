@@ -259,6 +259,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert acct.custom() == ["Uni"]
     acct.delete("Uni")
     assert acct.custom() == []
+    acct.set_sources("Mailbox", ["INBOX"])
+    acct.set_sources("Mailbox", [])  # nothing ticked: back to homer's default
+    assert acct.folders()["Mailbox"] == ["INBOX", "[Gmail]/Sent Mail"]
+    acct.set_sources("Feed", [])  # your own folder can stay, fed by nothing
+    assert acct.folders()["Feed"] == [] and acct.fetch("Feed", 50) == []
+    store.STATE_FILE = Path(tmp) / "tui.toml"
+    store.save_state({"theme": "nord", "names": {"g": "Work \"mail\""}})
+    assert store.load_state() == {"theme": "nord", "names": {"g": "Work \"mail\""}}
 
 html, plain = store.with_footer("Hi <Bob>,\n\nsee https://x.com/a.\n")
 assert html == '<p>Hi &lt;Bob&gt;,</p>\n<p>see <a href="https://x.com/a">https://x.com/a</a>.</p>\n' + store.FOOTER_HTML
@@ -362,4 +370,123 @@ else:
                 assert str(app.screen.query_one(tui.Status).render()).startswith('✓ Sent "Hi" to bob@x.com')
 
         asyncio.run(drive())
+
+        # newsletters: link targets, image placeholders and long tracking URLs go; prose and short links stay
+        news = ("Hi Arjun,\n[image: Logo]\n<https://t.example.com/open?id=1>\n\nRead the plan <https://t.example.com/c/9>"
+                " at https://example.com/trip/plan.\nTrack it: https://click.example.com/" + "a" * 60 + "\n\n\n\nBye")
+        assert tui.readable(news) == ("Hi Arjun,\n\nRead the plan at https://example.com/trip/plan.\n"
+                                      "Track it: click.example.com/…\n\nBye")
+
+        # folders: Enter unticks, s saves an empty feed; R on an account row renames only what's shown
+        store.STATE_FILE = Path(tmp) / "tui.toml"
+        box["Sent"] = [row(9, "Sent", "me@x.com", "t9", "2026-10-11T09:00:00+00:00")]
+        fake.folders = lambda n, a: ["INBOX", "Sent", "All", "Trash", "News"]
+
+        async def drive2():
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}},
+                             "tui": {"theme": "nord", "colors": {"sent": "nonsense!!"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                main = app.screen
+                assert app.theme == "nord" and "colors.sent" in str(main.query_one(tui.Status).render())
+                sent = next(c for c in main.convs if c["mine"])
+                assert main.row(sent, 80).plain.startswith(" →")
+                both = {**sent, "mine": False, "msgs": sent["msgs"] + [{**sent["msgs"][0], "addr": "a@x.com"}]}
+                assert any(s.style == tui.STYLE["thread"] and "(2)" in main.row(both, 80).plain[s.start:s.end]
+                           for s in main.row(both, 80).spans)  # you replied in it: the count is coloured
+                acct = app.accounts["g"]
+                acct.set_sources("Feed", ["News"])
+                app.push_screen(tui.MapScreen(acct, "Feed"))
+                await pilot.pause(0.5)
+                app.screen.query_one(tui.Ticks).highlighted = 0
+                await pilot.press("enter", "s")
+                await pilot.pause(0.2)
+                assert app.screen is main and store.load_maps()["g"]["Feed"] == []
+                await pilot.press("f")
+                await pilot.pause(0.2)
+                main.query_one(tui.FolderPane).highlighted = 0  # the account row
+                await pilot.press("R", *"\b" * 5, *"Work", "enter")
+                await pilot.pause(0.2)
+                assert acct.label == "Work" and store.load_state() == {"names": {"g": "Work"}} and acct.name == "g"
+                assert str(main.query_one("#hleft").render()).startswith("homer · Work ·")
+
+                # ctrl+t: the cursor previews a theme, Esc puts nord back, Enter keeps and saves one
+                await pilot.press("escape", "ctrl+t", "j")
+                await pilot.pause(0.2)
+                assert app.theme != "nord"
+                await pilot.press("escape")
+                await pilot.pause(0.2)
+                assert app.theme == "nord" and "theme" not in store.load_state()
+                await pilot.press("ctrl+t", "k", "enter")
+                await pilot.pause(0.2)
+                assert app.screen is main and store.load_state() == {"theme": app.theme, "names": {"g": "Work"}}
+                assert app.theme != "nord" and tui.STYLE["me"].endswith(app.get_css_variables()["accent"])
+
+                # a role takes the next colour of the theme's palette, and follows the theme when it changes
+                await pilot.press("ctrl+t", "tab", "right", "b", "enter")
+                await pilot.pause(0.2)
+                assert store.load_state()["colors"] == {"unread": "$secondary"}  # bold toggled off
+                assert tui.STYLE["unread"] == app.get_css_variables()["secondary"]
+                await pilot.press("ctrl+t", "j", "enter")
+                await pilot.pause(0.2)
+                assert tui.STYLE["unread"] == app.get_css_variables()["secondary"] and app.screen is main
+
+        asyncio.run(drive2())
+
+        # the preview follows the cursor: each row shows its own conversation, newest mail opened, even when
+        # the cursor moves faster than the server answers
+        mails = {}
+        inbox = []
+        for i, (addr, thread, hour) in enumerate([("a@x.com", "p1", 9), ("me@x.com", "p1", 10), ("b@x.com", "p2", 8),
+                                                  ("me@x.com", "p3", 7), ("c@x.com", "p4", 6), ("d@x.com", "p5", 5)]):
+            inbox.append(row(100 + i, "INBOX", addr, thread, f"2026-10-11T{hour:02}:00:00+00:00", to=("", "z@x.com")))
+            m = email.message.EmailMessage()
+            m.set_content(f"Body of mail {100 + i}")
+            mails[str(100 + i)] = m
+
+        def slow_raw(n, a, f, ref):
+            time.sleep(0.15)  # a server slower than the cursor
+            return mails[ref].as_bytes()
+
+        fake3 = types.SimpleNamespace(
+            special_folders=lambda n, a: {r"\Inbox": "INBOX", r"\Sent": "Sent", r"\All": "All", r"\Trash": "Trash"},
+            summaries=lambda n, a, f, k, q=None: [dict(m) for m in inbox] if f == "INBOX" else [],
+            fetch_raw=slow_raw, mark=lambda *a: None)
+
+        async def drive3():
+            tui.BACKENDS = {"gmail": fake3}
+            store.CACHE = Path(tmp) / "cache3"
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(140, 30)) as pilot:
+                await pilot.pause(0.6)
+                main = app.screen
+                shown = lambda: "".join(str(w.render()) for w in main.query_one("#preview").children)
+
+                async def check(i):
+                    await pilot.pause(0.6)
+                    c = main.convs[main.query_one("#list").highlighted]
+                    assert c is main.convs[i] and c["subject"] in shown(), (i, shown())
+                    assert f"Body of mail {c['msgs'][-1]['id']}" in shown(), (i, shown())
+                    others = [m["id"] for d in main.convs if d is not c for m in d["msgs"]]
+                    assert not any(f"Body of mail {o}" in shown() for o in others), (i, shown())
+
+                assert [c["key"] for c in main.convs] == ["p1", "p2", "p3", "p4", "p5"]
+                await check(0)
+                for i in range(1, 5):
+                    await pilot.press("j")
+                    await check(i)
+                for i in (3, 2):
+                    await pilot.press("k")
+                    await check(i)
+                await pilot.press("g")
+                await check(0)
+                await pilot.press("G")
+                await check(4)
+                main.raws.clear()  # nothing cached: every row has to be fetched again
+                await pilot.press("g", "j", "j", "j")  # faster than the server; only the last row may win
+                await check(3)
+                await pilot.press("k", "k")
+                await check(1)
+
+        asyncio.run(drive3())
         print("tui ok")
