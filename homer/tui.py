@@ -1,5 +1,5 @@
 """homer TUI, built on Textual: a list and a preview, folders on f. Every window and the reason for it is in
-FRAME.md (windows W1-W21, decisions D1-D21); the workflow and limits are in TUI.md. Data lives in store.py."""
+docs/FRAME.md (windows W1-W22, decisions D1-D25); the workflow and limits are in docs/TUI.md. Data lives in store.py."""
 import base64
 import email
 import email.policy
@@ -652,7 +652,7 @@ class MainScreen(Screen):
         if not convs:
             return
         if dest == self.folder and not self.everywhere:
-            self.say(f"Already in {dest}" + (". homer doesn't delete mail for good (TUI.md)" if dest == "Trash" else ""))
+            self.say(f"Already in {dest}" + (". Homer doesn't delete mail for good" if dest == "Trash" else ""))
             return
         try:
             target = self.acct.target(dest)

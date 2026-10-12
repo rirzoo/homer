@@ -51,7 +51,7 @@ PYTHONPATH=%{buildroot}%{_datadir}/%{name} %{buildroot}%{_bindir}/%{name} --help
 
 %files
 %license LICENSE
-%doc README.md TUI.md
+%doc README.md
 %{_bindir}/%{name}
 %{_datadir}/%{name}/
 

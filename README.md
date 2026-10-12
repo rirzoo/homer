@@ -13,7 +13,7 @@ $ homer read -a inst 2 --save ~/Downloads
 $ homer send -a gmail --to prof@uni.edu -s "Assignment 3" -b "Please find it attached." --attach a3.pdf
 ```
 
-You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create folders, move messages and mark them read or unread. All your accounts sit side by side and you pick one with `-a`.
+You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create folders, move messages, mark them read or unread, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
@@ -35,6 +35,7 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
     - [Option B: ask your IT department](#option-b-ask-your-it-department)
 - [Usage](#usage)
   - [HTML mail](#html-mail)
+  - [Rules and filters](#rules-and-filters)
 - [Using Homer from an agent](#using-homer-from-an-agent)
 - [TUI](#tui)
   - [Folders](#folders)
@@ -42,6 +43,7 @@ The command line uses only the Python standard library. The TUI uses Textual, wh
   - [Colours](#colours)
   - [Planned for the TUI](#planned-for-the-tui)
 - [Help & troubleshooting](#help--troubleshooting)
+- [Privacy](#privacy)
 - [Development](#development)
 - [License](#license)
 
@@ -151,7 +153,7 @@ Many organisations let users do this.
 
 1. Open <https://entra.microsoft.com>, go to *App registrations* and click *New registration*. Name it `homer`, keep "Accounts in this organizational directory only", and leave Redirect URI empty.
 2. Under *Authentication*, open *Advanced settings*, set *Allow public client flows* to Yes, and save.
-3. Under *API permissions*, click *Add a permission*, choose *Microsoft Graph*, then *Delegated*, and add `Mail.ReadWrite` and `Mail.Send`.
+3. Under *API permissions*, click *Add a permission*, choose *Microsoft Graph*, then *Delegated*, and add `Mail.ReadWrite` and `Mail.Send`. Add `MailboxSettings.ReadWrite` as well if you want Homer to manage your rules.
 4. On the *Overview* page, copy the Application (client) ID into `client_id` and the Directory (tenant) ID into `tenant`. Your mail domain also works for `tenant`.
 
 #### Option B: ask your IT department
@@ -174,7 +176,7 @@ It prints a code and a URL. Open the URL in any browser, enter the code, and sig
 
 ```
 homer accounts                                   list configured accounts
-homer login   -a ACCT                            link an account
+homer login   -a ACCT [--rules]                  link an account (--rules: also let Homer manage rules)
 homer folders -a ACCT                            list folders
 homer list    [-a ACCT] [-f FOLDER] [-n 20] [--unread] [--search QUERY]
 homer read    ID [-a ACCT] [-f FOLDER] [--save DIR]
@@ -184,6 +186,11 @@ homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NO
 homer mkdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
+homer rules   [-a ACCT]                          list rules (Gmail: filters) with their ids
+homer rules add [-a ACCT] [--name NAME] [--from ADDR] [--to ADDR] [--subject TEXT] [--has TEXT]
+                [--move FOLDER | --archive] [--read] [--delete] [--forward ADDR]
+homer rules edit ID [-a ACCT] [same flags as add, plus --no-read and --no-delete]
+homer rules rm ID... [-a ACCT]
 homer         [-a ACCT]                          open the TUI (same as homer tui)
 ```
 
@@ -222,6 +229,45 @@ Provider differences:
 
 Outlook numbers are reassigned on every `list`, so run `list` on the folder right before `read`/`move`/`mark`.
 
+### Rules and filters
+
+Rules run on the mail server and sort new mail as it arrives, whether or not Homer is running. Outlook calls them rules and Gmail calls them filters; Homer calls both rules.
+
+```sh
+homer rules -a inst                                         # list them with their ids
+homer rules add -a inst --name Placements --from tpc@institute.edu --move Placements
+homer rules add --from news@shop.example --archive --read
+homer rules edit -a inst AQAAAGRpOkc= --from cell@institute.edu   # changes only the sender
+homer rules rm -a inst AQAAAGRpOkc=
+```
+
+`--from`, `--to` and `--subject` match text anywhere in that field. `--has` looks in the body and subject on Outlook, and works like the Gmail search box on Gmail. Repeat a flag to match any of several values. When a rule has several conditions, all of them have to match.
+
+The actions are `--move FOLDER`, `--archive`, `--read`, `--delete` and `--forward ADDR`. On Gmail, `--move` adds the label and takes the mail out of the inbox. `edit` changes only the flags you give it, and `--no-read` or `--no-delete` turn those actions off. A rule you made in Outlook or Gmail can have parts Homer doesn't know about, like categories or a size limit. `homer rules` marks such a rule with "(+ more)", and `edit` leaves those parts as they are.
+
+Gmail filters have no names, and Gmail can't change one in place. On Gmail, `edit` adds the changed filter and then deletes the old one, so the filter gets a new id. A Gmail filter forwards to one address at most, and only to an address you've verified under *Settings → Forwarding*.
+
+#### Setting up rules on Gmail
+
+The app password only covers IMAP and SMTP, and IMAP can't see filters. Homer reaches them through the Gmail API, which needs an OAuth client from a Google Cloud project of your own. You set this up once:
+
+1. Open <https://console.cloud.google.com>, create a project, and enable the *Gmail API* under *APIs & Services → Library*.
+2. Open *Google Auth Platform*, choose *External*, and fill in an app name and your address. Under *Audience*, add your own address as a test user. The app starts in *Testing*, where it works straight away but your sign-in expires after 7 days. To keep it from expiring, click *Publish app*. Publishing asks for a homepage and a privacy policy, and you can give `https://github.com/rirzoo/homer` and `https://github.com/rirzoo/homer#privacy`. Google doesn't review the app either way, so the sign-in page warns that it's unverified. Click *Advanced* and continue, since the app is yours.
+3. Under *Clients*, create a client of type *Desktop app*, and copy its ID and secret into the account (they're also in the JSON file you can download there). Google doesn't treat a desktop app's secret as confidential, so the config file is a fine place for it.
+
+   ```toml
+   [accounts.gmail]
+   email = "you@gmail.com"
+   client_id = "1234-abc.apps.googleusercontent.com"
+   client_secret = "GOCSPX-..."
+   ```
+
+4. Run `homer login -a gmail --rules`. Homer opens Google's sign-in page in your browser and prints the link as well. Allow access to your filters and labels. Homer stores the token in your keyring next to the app password.
+
+#### Setting up rules on Microsoft 365
+
+Some accounts can manage rules with no extra setup, so try `homer rules -a inst` first. If it asks for `MailboxSettings.ReadWrite`, add that permission to your app as in step 3 of Option A and run `homer login -a inst --rules`.
+
 ## Using Homer from an agent
 
 An agent uses Homer more reliably when a skill tells it when to reach for Homer and how. For Claude Code, save something like this as `~/.claude/skills/homer-mail/SKILL.md` and change the accounts to yours:
@@ -238,6 +284,7 @@ Use `homer` for all mail. `homer --help` and `homer <command> --help` list the o
 - Pass the body on stdin with a quoted heredoc (`<<'EOF'`) so quotes and `$` survive.
 - Answer a mail with `homer reply ID`, not `send`, so it stays in the same thread.
 - On Outlook accounts, IDs change with every `list`. Run `list` right before `read`, `move` or `mark`.
+- Ask me before adding, changing or removing a rule with `homer rules`.
 - Before sending, show me the recipient, subject and body and wait for my OK. If unsure, use `--draft`.
 ```
 
@@ -245,7 +292,7 @@ You can add your contacts' addresses and a signature to the same file. Codex and
 
 ## TUI
 
-`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with Homer. [TUI.md](TUI.md) explains how it's meant to be used and what it can't do, and [FRAME.md](FRAME.md) has a wireframe of every window with the reasons behind each choice.
+`homer` opens your default account's Mailbox and `homer -a inst` opens another account; `homer tui` is the same thing. It's built on [Textual](https://textual.textualize.io), which installs along with Homer.
 
 The screen has two panes: your mail on the left and the conversation under the cursor on the right. `f` opens a third pane on the left with your folders and your other accounts, and closes again once you pick one. A row is a whole conversation, so your replies sit next to the mail they answer (`T` switches to one row per mail). Below 100 columns you get one pane at a time.
 
@@ -321,6 +368,8 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 
 - `homer --help` and `homer <command> --help` show all options.
 - An `AADSTS...` error or "Need admin approval" at sign-in means your organisation hasn't approved the app. See Option B.
+- `rules need the MailboxSettings.ReadWrite permission`: see [Setting up rules on Microsoft 365](#setting-up-rules-on-microsoft-365).
+- `invalid_grant` from `homer rules` on Gmail, about a week after setup, means the Google app is in *Testing*, where sign-ins last 7 days. Run `homer login -a gmail --rules` again, or publish the app (step 2 of [Setting up rules on Gmail](#setting-up-rules-on-gmail)).
 - `graph 403` means the token doesn't have mail permissions. Check the app's API permissions or set `scope` as shown above, then run `homer login` again.
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
@@ -328,13 +377,23 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 
 If you're stuck or something's broken, [open an issue](https://github.com/rirzoo/homer/issues) with the command you ran and the full error, minus your email address and any tokens. Feature requests (macOS keychain support, say) and pull requests are welcome too.
 
+## Privacy
+
+Homer runs on your computer, and there's no Homer server. It connects only to the mail services in your config. For Gmail, those are Google's IMAP and SMTP servers, plus Google's sign-in and the Gmail API once you set up filters. For Microsoft 365, they're Microsoft's sign-in and its mail APIs. Homer collects no analytics and sends nothing to the Homer project or anyone else.
+
+App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. You can delete that folder at any time.
+
+Once you allow filter access, Homer reads and changes your Gmail filters and reads your label names, and it does this only when you run a command that needs them. Homer's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
+
+To remove what Homer keeps, run `secret-tool clear service homer` for the passwords and tokens and `rm -r ~/.cache/homer` for the cache. You can also revoke Homer's access to your Google account at <https://myaccount.google.com/permissions>.
+
 ## Development
 
 ```sh
 python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP), `homer/outlook.py` (Microsoft Graph + OAuth), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui.py` (the Textual TUI).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui.py` (the Textual TUI).
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
 

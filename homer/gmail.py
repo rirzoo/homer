@@ -1,16 +1,23 @@
 """Gmail over IMAP/SMTP with an app password. Works for any IMAP/SMTP server via `imap`/`smtp` config keys."""
+import base64
+import copy
 import email
 import email.policy
 import functools
 import getpass
+import hashlib
+import http.server
 import imaplib
 import re
+import secrets
 import smtplib
 import sys
 import threading
 import time
+import urllib.parse
+import webbrowser
 
-from .common import die, secret_get, secret_set
+from .common import die, http_json, post_form, secret_get, secret_set
 
 IDLE = 600  # seconds; a connection unused this long is replaced, since NATs and Gmail drop idle ones silently
 _sessions = {}  # account name -> _Session, reused across calls so the TUI pays connect+login once
@@ -98,7 +105,9 @@ def _folder_name(line):
 
 # --- backend interface (same functions as outlook.py) -----------------------
 
-def login(name, acct):
+def login(name, acct, rules=False):
+    if rules:
+        return _google_login(name, acct)
     if not sys.stdin.isatty():
         die("password prompt needs a real terminal; run this in a normal terminal window")
     secret_set(name, "password", getpass.getpass(f"app password for {acct['email']}: "))
@@ -308,3 +317,145 @@ def summaries(s, folder, n, query=None):
         for r in rows:
             r["attach"] = r["id"] in withatt
     return sorted(rows, key=lambda r: int(r["id"]), reverse=True)
+
+
+# --- rules: Gmail filters, through the Gmail API (IMAP can't see filters) -------
+
+GOOGLE_SCOPE = "https://www.googleapis.com/auth/gmail.settings.basic https://www.googleapis.com/auth/gmail.labels"
+GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+_FIELDS = ("from", "to", "subject")
+_gtokens = {}
+
+
+def _google_client(name, acct):
+    if acct.get("imap", "imap.gmail.com") != "imap.gmail.com":
+        die("rules work on Gmail and Microsoft 365 only; other IMAP servers keep their filters out of reach")
+    if not (acct.get("client_id") and acct.get("client_secret")):
+        die(f"Gmail filters need a Google OAuth client: add client_id and client_secret to [accounts.{name}] "
+            "(see README: Rules and filters)")
+    return acct["client_id"], acct["client_secret"]
+
+
+def _google_login(name, acct):
+    """OAuth in the browser with a one-shot loopback server; Google's device flow doesn't allow Gmail scopes."""
+    cid, secret = _google_client(name, acct)
+    verifier, state = secrets.token_urlsafe(48), secrets.token_urlsafe(16)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    got = {}
+
+    class Catch(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            got.update(urllib.parse.parse_qsl(urllib.parse.urlsplit(self.path).query))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Done. You can close this tab and go back to the terminal.")
+
+        def log_message(self, *args):
+            pass
+
+    with http.server.HTTPServer(("127.0.0.1", 0), Catch) as srv:
+        redirect = f"http://127.0.0.1:{srv.server_port}"
+        url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode({
+            "client_id": cid, "redirect_uri": redirect, "response_type": "code", "scope": GOOGLE_SCOPE,
+            "access_type": "offline", "prompt": "consent", "login_hint": acct["email"], "state": state,
+            "code_challenge": challenge, "code_challenge_method": "S256"})
+        print(f"Sign in to let Homer manage the filters of {acct['email']}:\n{url}", file=sys.stderr, flush=True)
+        webbrowser.open(url)
+        while "code" not in got and "error" not in got:  # skips the browser's /favicon.ico request
+            srv.handle_request()
+    if "code" not in got or got.get("state") != state:
+        die(f"Google sign-in failed: {got.get('error', 'state mismatch')}")
+    tok = post_form(GOOGLE_TOKEN, {"code": got["code"], "client_id": cid, "client_secret": secret,
+                                   "redirect_uri": redirect, "grant_type": "authorization_code",
+                                   "code_verifier": verifier})
+    if "refresh_token" not in tok:
+        die(f"Google sign-in failed: {tok.get('error_description', tok)}")
+    secret_set(name, "refresh_token", tok["refresh_token"])
+    _gtokens[name] = tok["access_token"]
+    rules_list(name, acct)  # prove the token can read filters
+
+
+def _api(name, acct, path, data=None, method=None):
+    if name not in _gtokens:
+        cid, secret = _google_client(name, acct)
+        rt = secret_get(name, "refresh_token") or die(f"Gmail filters aren't linked yet; run: homer login -a {name} --rules")
+        tok = post_form(GOOGLE_TOKEN, {"grant_type": "refresh_token", "refresh_token": rt,
+                                       "client_id": cid, "client_secret": secret})
+        _gtokens[name] = tok.get("access_token") or die(
+            f"{tok.get('error_description', tok)}\nrun: homer login -a {name} --rules")
+    return http_json(GMAIL_API + path, _gtokens[name], data, method)
+
+
+def _label_ids(name, acct):
+    return {lab["name"]: lab["id"] for lab in _api(name, acct, "/labels")["labels"]}
+
+
+def _rule(f, label_name=lambda lid: lid):
+    """Gmail filter -> Homer's rule dict (same shape as outlook._rule). Gmail filters have no names."""
+    c, a = f.get("criteria", {}), f.get("action", {})
+    add, rm = a.get("addLabelIds", []), a.get("removeLabelIds", [])
+    labels = [lid for lid in add if lid.startswith("Label_")]  # user labels; system ones are upper case
+    move = labels[0] if labels and "INBOX" in rm else None  # label + skip the inbox is Gmail's move
+    return {"id": f["id"], "name": "", "enabled": True,
+            **{k: c[k].split(" OR ") if c.get(k) else [] for k in _FIELDS},
+            "has": c["query"].split(" OR ") if c.get("query") else [],
+            "move": move and label_name(move), "label": [label_name(lid) for lid in labels if lid != move],
+            "archive": "INBOX" in rm and not move, "read": "UNREAD" in rm, "delete": "TRASH" in add,
+            "forward": [a["forward"]] if a.get("forward") else [],
+            "other": any(v for k, v in c.items() if k not in (*_FIELDS, "query"))
+            or bool(set(add) - set(labels) - {"TRASH"} or set(rm) - {"INBOX", "UNREAD"})}
+
+
+def _native(changes, base=None, label_id=lambda name: name):
+    """Apply Homer's rule changes (None = leave alone) to a Gmail filter, keeping everything Homer doesn't model."""
+    f = copy.deepcopy(base or {})
+    f.pop("id", None)
+    c, a = f.setdefault("criteria", {}), f.setdefault("action", {})
+    for k, field in (*((k, k) for k in _FIELDS), ("has", "query")):
+        if changes.get(k) is not None:
+            c[field] = " OR ".join(changes[k])
+    add, rm = set(a.get("addLabelIds", [])), set(a.get("removeLabelIds", []))
+    if changes.get("move"):
+        add = {lid for lid in add if not lid.startswith("Label_")} | {label_id(changes["move"])}  # replaces the old folder
+        rm.add("INBOX")
+    if changes.get("archive"):
+        rm.add("INBOX")
+    for k, ids, lid in (("read", rm, "UNREAD"), ("delete", add, "TRASH")):
+        if changes.get(k) is not None:
+            (ids.add if changes[k] else ids.discard)(lid)
+    if changes.get("forward") is not None:
+        if len(changes["forward"]) > 1:
+            die("a Gmail filter can forward to one address only")
+        a["forward"] = changes["forward"][0] if changes["forward"] else None
+    a["addLabelIds"], a["removeLabelIds"] = sorted(add), sorted(rm)
+    f["criteria"] = {k: v for k, v in c.items() if v}
+    f["action"] = {k: v for k, v in a.items() if v}
+    return f
+
+
+def _label_id(name, acct, label):
+    return _label_ids(name, acct).get(label) or die(f"no Gmail label named {label!r}; make it with: homer mkdir -a {name} {label!r}")
+
+
+def rules_list(name, acct):
+    names = {lid: lname for lname, lid in _label_ids(name, acct).items()}
+    return [_rule(f, lambda lid: names.get(lid, lid)) for f in _api(name, acct, "/settings/filters").get("filter", [])]
+
+
+def add_rule(name, acct, changes):
+    return _api(name, acct, "/settings/filters", _native(changes, label_id=lambda lab: _label_id(name, acct, lab)))["id"]
+
+
+def edit_rule(name, acct, rid, changes):
+    """The Gmail API can't update a filter, so this adds the edited copy, then deletes the old one. Returns the new id."""
+    path = "/settings/filters/" + urllib.parse.quote(rid)
+    new = _native(changes, _api(name, acct, path), lambda lab: _label_id(name, acct, lab))
+    nid = _api(name, acct, "/settings/filters", new)["id"]
+    _api(name, acct, path, method="DELETE")
+    return nid
+
+
+def rm_rule(name, acct, rid):
+    _api(name, acct, "/settings/filters/" + urllib.parse.quote(rid), method="DELETE")
