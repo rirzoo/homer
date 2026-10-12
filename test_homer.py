@@ -259,6 +259,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert acct.custom() == ["Uni"]
     acct.delete("Uni")
     assert acct.custom() == []
+    acct.set_sources("Mailbox", ["INBOX"])
+    acct.set_sources("Mailbox", [])  # nothing ticked: back to homer's default
+    assert acct.folders()["Mailbox"] == ["INBOX", "[Gmail]/Sent Mail"]
+    acct.set_sources("Feed", [])  # your own folder can stay, fed by nothing
+    assert acct.folders()["Feed"] == [] and acct.fetch("Feed", 50) == []
+    store.NAMES_FILE = Path(tmp) / "names.toml"
+    store.save_names({"g": "Work \"mail\""})
+    assert store.load_names() == {"g": "Work \"mail\""}
 
 html, plain = store.with_footer("Hi <Bob>,\n\nsee https://x.com/a.\n")
 assert html == '<p>Hi &lt;Bob&gt;,</p>\n<p>see <a href="https://x.com/a">https://x.com/a</a>.</p>\n' + store.FOOTER_HTML
@@ -327,4 +335,45 @@ else:
                 assert str(app.screen.query_one(tui.Status).render()).startswith('✓ Sent "Hi" to bob@x.com')
 
         asyncio.run(drive())
+
+        # newsletters: link targets, image placeholders and long tracking URLs go; prose and short links stay
+        news = ("Hi Arjun,\n[image: Logo]\n<https://t.example.com/open?id=1>\n\nRead the plan <https://t.example.com/c/9>"
+                " at https://example.com/trip/plan.\nTrack it: https://click.example.com/" + "a" * 60 + "\n\n\n\nBye")
+        assert tui.readable(news) == ("Hi Arjun,\n\nRead the plan at https://example.com/trip/plan.\n"
+                                      "Track it: click.example.com/…\n\nBye")
+
+        # folders: Enter unticks, s saves an empty feed; R on an account row renames only what's shown
+        store.NAMES_FILE = Path(tmp) / "names.toml"
+        box["Sent"] = [row(9, "Sent", "me@x.com", "t9", "2026-10-11T09:00:00+00:00")]
+        fake.folders = lambda n, a: ["INBOX", "Sent", "All", "Trash", "News"]
+
+        async def drive2():
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}},
+                             "tui": {"theme": "nord", "colors": {"sent": "nonsense!!"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                main = app.screen
+                assert app.theme == "nord" and "colors.sent" in str(main.query_one(tui.Status).render())
+                sent = next(c for c in main.convs if c["mine"])
+                assert main.row(sent, 80).plain.startswith(" →")
+                both = {**sent, "mine": False, "msgs": sent["msgs"] + [{**sent["msgs"][0], "addr": "a@x.com"}]}
+                assert any(s.style == tui.STYLE["thread"] and "(2)" in main.row(both, 80).plain[s.start:s.end]
+                           for s in main.row(both, 80).spans)  # you replied in it: the count is coloured
+                acct = app.accounts["g"]
+                acct.set_sources("Feed", ["News"])
+                app.push_screen(tui.MapScreen(acct, "Feed"))
+                await pilot.pause(0.5)
+                app.screen.query_one(tui.Ticks).highlighted = 0
+                await pilot.press("enter", "s")
+                await pilot.pause(0.2)
+                assert app.screen is main and store.load_maps()["g"]["Feed"] == []
+                await pilot.press("f")
+                await pilot.pause(0.2)
+                main.query_one(tui.FolderPane).highlighted = 0  # the account row
+                await pilot.press("R", *"\b" * 5, *"Work", "enter")
+                await pilot.pause(0.2)
+                assert acct.label == "Work" and store.load_names() == {"g": "Work"} and acct.name == "g"
+                assert str(main.query_one("#hleft").render()).startswith("homer · Work ·")
+
+        asyncio.run(drive2())
         print("tui ok")

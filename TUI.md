@@ -73,11 +73,13 @@ What the TUI can and can't change:
 
 - Two panes, list and preview, by default. The folder pane opens with `f` (D1, D2).
 - List rows are conversations, with a mail count. `T` switches to one row per mail (D3).
-- Unread rows are marked `●` and bold, rows with attachments `+`, and a conversation you started with no reply yet `To ‹name›`.
+- Unread rows are marked `●` and bold, rows with attachments `+`, and a conversation you started with no reply yet `→ To ‹name›` in the sent colour. When you've replied in a conversation, its mail count takes the thread colour.
+- Your own mails in a conversation get a bar down the left. Colours and the theme come from `[tui]` in the config.
 - Relative dates (`2m`, `14:02`, `Mon`, `3 Oct`).
 - In the conversation view, quoted text is dimmed, older mails collapse, and links and attachments are numbered.
 - Attachments can be saved one at a time or all at once to `~/Downloads`, or opened in their default app.
-- `v` opens an HTML mail in the browser.
+- Tracking links and image placeholders are left out of the text. Links show as a count for `o`, and inline images aren't listed as attachments.
+- `v`, from the list or the conversation, opens the mail in the browser with its inline images.
 
 ### Handling
 
@@ -92,7 +94,8 @@ What the TUI can and can't change:
 ### Accounts and folders
 
 - Every account in one folder pane, with Mailbox unread counts for each.
-- Homer folders: the four fixed ones plus your own, created and mapped in the TUI.
+- Homer folders: the four fixed ones plus your own, created and mapped in the TUI. In the mapping list `Space` or `Enter` ticks and `s` saves. Unticking everything resets Mailbox or Archive, or leaves your own folder empty.
+- `R` on an account renames it in the TUI only (`names.toml`). The config key stays.
 
 ### Staying current
 

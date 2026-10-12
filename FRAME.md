@@ -211,13 +211,13 @@ Why: account setup involves app passwords and OAuth device codes, which the CLI 
    Hi Arjun,
 
    The schedule is out. We leave on the 19th, see the PDF [1]. The hotel list is on the
-   booking page [2].
+   booking page.
 
    > On Sat 10 Oct, me wrote:
    > Sure, send it over when it's out.
 
-   Links        [2] https://example.com/trip/plan
    Attachments  [1] schedule.pdf · 120 KB
+   Links        1 · o picks one
 ──────────────────────────────────────────────────────────────────────────────────────────────
  23/41
  r reply  R all  F forward  e archive  s save  o open link  n/p next/prev mail  v browser  q back
@@ -484,7 +484,7 @@ Why: a small box over the list instead of a full screen, so you still see what y
  homer · gmail · folders › Travels
 ──────────────────────────────────────────────────────────────────────────────────────────────
  Mail in these gmail folders and labels shows in Travels. Moves to Travels go to the one
- marked ◆.
+ marked ◆. Space or Enter ticks a folder, s saves.
 
  >[x] ◆ Travels/2026                            34 mails
   [x]   Travels/Treks                           12 mails
@@ -499,14 +499,14 @@ Why: a small box over the list instead of a full screen, so you still see what y
  To create a new gmail label, use the CLI: homer mkdir NAME -a gmail
 ──────────────────────────────────────────────────────────────────────────────────────────────
 
- space pick  t make it where moves go  Enter save  Esc cancel
+ space/Enter tick  t make it where moves go  s save  Esc cancel
 ```
 
 - Folders and labels already feeding another Homer folder are greyed out with `[·]` and show where they are (D6). To move one, remove it from that folder first.
 - `◆` marks the folder that moves land in. It defaults to the first one you pick.
 - On Mailbox, the defaults are INBOX and Sent (Gmail: `INBOX`, `[Gmail]/Sent Mail`; Outlook: `inbox`, `sentitems`). Moves to Mailbox go to INBOX.
 - On Archive, the defaults are `[Gmail]/All Mail` and Outlook's `archive`. Archive is the catch-all (D5), so it only shows conversations that aren't in Mailbox or your own folders.
-- Saving refreshes the folder's list.
+- Saving refreshes the folder's list. Saving with nothing ticked puts Mailbox or Archive back to the defaults above. Your own folder stays, empty until something feeds it.
 
 Why: one screen covers both what goes into Mailbox and Archive and the mapping for your own folders. The CLI hint is there because the TUI deliberately can't create labels (D7).
 

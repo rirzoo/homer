@@ -1,5 +1,6 @@
 """homer TUI, built on Textual: a list and a preview, folders on f. Every window and the reason for it is in
 FRAME.md (windows W1-W21, decisions D1-D21); the workflow and limits are in TUI.md. Data lives in store.py."""
+import base64
 import email
 import email.policy
 import os
@@ -13,6 +14,8 @@ from email.utils import formataddr, getaddresses
 from pathlib import Path
 
 from rich.cells import cell_len, set_cell_size
+from rich.errors import StyleSyntaxError
+from rich.style import Style
 from rich.text import Text
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -34,13 +37,17 @@ SEND_DELAY, READ_AFTER, SYNC_EVERY, WIDE, PAGE = 10, 2.0, 120, 100, 50
 CAUGHT = (Exception, SystemExit)  # backends die() with SystemExit; a worker must never take the app down
 ADDR = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 URL = re.compile(r"https?://[^\s<>\"'\]]+")
+# Colour roles, overridable in [tui.colors]; $names are the Textual theme's colours (README, "Colours")
+ROLES = {"unread": "bold $primary", "sent": "$success", "thread": "$success", "me": "bold $accent", "quote": "dim",
+         "selected": "bold $warning"}
+STYLE = {k: "" for k in ROLES}  # resolved by Homer.on_mount
 OUT_MARK = {"wait": ("↑", "bold cyan"), "sending": ("↑", "bold cyan"), "sent": ("✓", "bold green"),
             "failed": ("!", "bold red")}
 
 HELP = {
     "list": """\
 Move      j k  ↑ ↓   g G top/bottom   space b scroll the preview
-Open      Enter full view
+Open      Enter full view   v open in the browser, images and all
 Write     c new   r reply   R reply all   F forward
 Handle    e archive   d delete   m read/unread   M move   u undo
 Select    x select row   Esc clear selection or search
@@ -67,7 +74,8 @@ Anywhere  ctrl+s send""",
     "folders": """\
 Move      j k  ↑ ↓
 Open      Enter on a folder opens it; Enter on another account expands it
-Manage    n new folder   E edit what feeds it   R rename   D delete (homer only)
+Manage    n new folder   E edit what feeds it   D delete (homer only)
+          R rename a folder of yours, or the account the cursor is on
 Close     f or Esc""",
 }
 
@@ -111,6 +119,40 @@ def links_of(msg):
     return list(dict.fromkeys(u.rstrip(".,;:!?)") for u in found))
 
 
+def readable(text):
+    """Mail text without the link and image clutter of newsletters: lines that are only a URL or an image
+    placeholder go, <URL> link targets go, and long bare URLs shrink to their host. The links stay on o."""
+    text = re.sub(r"(?m)^[ \t>]*(?:<?https?://\S+>?|\[(?:image|cid):[^\]]*\])[ \t]*(?:\n|$)", "", text)
+    text = re.sub(r"[ \t]*<https?://[^>\s]+>", "", text)
+    text = re.sub(r"\[(?:image|cid):[^\]]*\]", "", text)
+    text = URL.sub(lambda m: m[0] if len(m[0]) <= 50 else m[0].split("/")[2] + "/…", text)
+    return re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", text)
+
+
+def inline(part):
+    """An image drawn inside the mail (a logo, a signature), as opposed to a file someone attached."""
+    return part.get_content_maintype() == "image" and bool(
+        part["Content-ID"] or part.get_content_disposition() == "inline")
+
+
+def open_in_browser(msg):
+    """The mail as its sender formatted it, inline images included, in the browser."""
+    VIEW.mkdir(parents=True, exist_ok=True)
+    html = msg.get_body(("html",))
+    if html is None:
+        path = VIEW / f"{uuid.uuid4().hex}.txt"
+        path.write_text(body_text(msg))
+    else:
+        page = part_text(html)
+        for p in msg.walk():
+            if not p.is_multipart() and p["Content-ID"]:
+                data = base64.b64encode(p.get_payload(decode=True) or b"").decode()
+                page = page.replace("cid:" + p["Content-ID"].strip("<>"), f"data:{p.get_content_type()};base64,{data}")
+        path = VIEW / f"{uuid.uuid4().hex}.html"
+        path.write_text(page)
+    open_external(path)
+
+
 def loc(acct, m):
     return acct.name, m["folder"], m["id"]
 
@@ -135,31 +177,38 @@ def conv_blocks(conv, acct, raws, opened, width, full=False, cursor=None):
             who += " → " + (m["to"][0][0] or m["to"][0][1])
         when = store.long_when(store.when_dt(m["when"])) if m["when"] else ""
         msg = raws.get(loc(acct, m))
+        bar = Text("▌ ", STYLE["me"]) if mine else Text("  ")  # your own mails carry a bar down the left
         t = Text()
         t.append("─" * width + "\n", "dim")
-        line = Text(("▾ " if i in opened else "▸ ") + who, "bold" if m["unread"] else "")
+        line = Text(("▾ " if i in opened else "▸ ") + who, STYLE["me"] if mine else "bold" if m["unread"] else "")
         line.truncate(max(10, width - len(when) - 1), overflow="ellipsis")
         line.append(" " * max(1, width - line.cell_len - len(when)) + when, "dim")
         if i == cursor:
             line.stylize("reverse")
         t.append_text(line)
         if i not in opened:
-            snippet = next((s for s in body_text(msg).splitlines() if s.strip() and not s.startswith(">")), "") \
-                if msg else ""
+            snippet = next((s for s in readable(body_text(msg)).splitlines() if s.strip() and not s.startswith(">")),
+                           "") if msg else ""
             if snippet:
-                t.append("\n  " + fit(snippet.strip(), width - 2).rstrip(), "dim")
+                t.append("\n").append_text(bar).append(fit(snippet.strip(), width - 2).rstrip(), "dim")
             blocks.append(t)
             continue
         if m["to"]:
-            t.append("\n  to " + ", ".join(nm or a for nm, a in m["to"]), "dim")
-        t.append("\n\n")
+            t.append("\n").append_text(bar).append("to " + ", ".join(nm or a for nm, a in m["to"]), "dim")
         if msg is None:
-            t.append("  Loading…", "dim")
+            t.append("\n\n  Loading…", "dim")
             blocks.append(t)
             continue
-        for ln in body_text(msg).rstrip().splitlines():
-            t.append("  " + ln + "\n", "dim" if ln.lstrip().startswith(">") else "")
         ps, ls = attachments(msg), links_of(msg)
+        images = sum(inline(p) for p in msg.walk() if not p.is_multipart())
+        ps = [p for p in ps if not inline(p)]
+        html = msg.get_body(("html",)) is not None
+        if html and (images or len(ls) > 3 or msg.get_body(("plain",)) is None):
+            note = "Formatted mail" + (f" with {images} image{'s' if images != 1 else ''}" if images else "")
+            t.append("\n").append_text(bar).append(note + " · v opens it in the browser", STYLE["quote"])
+        t.append("\n\n")
+        for ln in readable(body_text(msg)).rstrip().splitlines():
+            t.append_text(bar).append(ln + "\n", STYLE["quote"] if ln.lstrip().startswith(">") else "")
         if ps:
             t.append("\n  Attachments ", "bold")
             t.append("   ".join(f"[{len(parts) + k}] {p.get_filename()} · {human(len(p.get_payload(decode=True) or b''))}"
@@ -167,7 +216,7 @@ def conv_blocks(conv, acct, raws, opened, width, full=False, cursor=None):
             parts += ps
         if ls:
             t.append("\n  Links       ", "bold")
-            t.append("\n              ".join(f"[{len(parts) + len(links) + k}] {u}" for k, u in enumerate(ls, 1)))
+            t.append(f"{len(ls)} · o picks one", "dim")
             links += ls
         blocks.append(t)
     return blocks, links, parts
@@ -253,6 +302,7 @@ class MainScreen(Screen):
         Binding("slash", "search", "search"),
         Binding("f", "folders", "folders"),
         Binding("T", "single", show=False),
+        Binding("v", "browser", show=False),
         Binding("plus", "more", show=False),
         Binding("ctrl+r", "sync", show=False),
         Binding("escape", "clear", show=False),
@@ -294,6 +344,8 @@ class MainScreen(Screen):
         self.set_interval(1, self.tick)
         self.set_interval(SYNC_EVERY, self.action_sync)
         self.show_cached()
+        if self.app.config_note:
+            self.say(self.app.config_note, True)
         if any(a.special is None for a in self.app.accounts.values()):
             self.first_run()
         else:
@@ -309,7 +361,7 @@ class MainScreen(Screen):
         self.query_one(Status).say(text, error)
 
     def paint_header(self):
-        left = f"homer · {self.acct.name} · {self.folder}"
+        left = f"homer · {self.acct.label} · {self.folder}"
         if self.query_text:
             left += f' · "{self.query_text}"' + (" in all folders" if self.everywhere else "")
         right = []
@@ -345,7 +397,7 @@ class MainScreen(Screen):
                 try:
                     a.load_special()
                 except CAUGHT as e:
-                    self.app.call_from_thread(self.say, f"! {a.name}: {err(e)}", True)
+                    self.app.call_from_thread(self.say, f"! {a.label}: {err(e)}", True)
         self.app.call_from_thread(self.action_sync)
 
     def action_sync(self):
@@ -376,7 +428,7 @@ class MainScreen(Screen):
         if error is not None:
             text = err(error)
             if "login" in text or "AUTHENTICATIONFAILED" in text or "logged in" in text:
-                self.health = f"{self.acct.name}: sign in again (homer login -a {self.acct.name})"
+                self.health = f"{self.acct.label}: sign in again (homer login -a {self.acct.name})"
                 self.say("! " + self.health, True)
             else:
                 self.health = "offline" if isinstance(error, OSError) or "request failed" in text else "sync failed"
@@ -444,13 +496,17 @@ class MainScreen(Screen):
     def row(self, c, width):
         out = c.get("out")
         t = Text(no_wrap=True, overflow="ellipsis")
-        t.append("■" if c["key"] in self.selected else " ", "bold yellow")
-        mark, style = OUT_MARK[out["state"]] if out else ("●", "bold cyan") if c["unread"] else (" ", "")
+        t.append("■" if c["key"] in self.selected else " ", STYLE["selected"])
+        mark, style = (OUT_MARK[out["state"]] if out else ("●", STYLE["unread"]) if c["unread"]
+                       else ("→", STYLE["sent"]) if c["mine"] else (" ", ""))
         t.append(mark + " ", style)
         w = 20 if width >= 70 else 14
         n = len(c["msgs"])
         count = f" ({n})" if n > 1 else ""
-        t.append(fit(c["who"], w - len(count)) + count, "bold" if c["unread"] else "")  # the count never gets cut
+        who = STYLE["sent"] if c["mine"] else "bold" if c["unread"] else ""
+        t.append(fit(c["who"], w - len(count)), who)  # the count never gets cut
+        replied = not c["mine"] and any(m["addr"].lower() in self.acct.me for m in c["msgs"])
+        t.append(count, STYLE["thread"] if replied else who)  # coloured when you're in the conversation
         t.append(" + " if c["attach"] else "   ", "dim")
         date = (f"{out['left']}s" if out["state"] == "wait" else "now") if out else store.short_when(c["when"])
         t.append(fit(c["subject"] or "(no subject)", max(4, width - w - 13)), "bold" if c["unread"] else "")
@@ -764,8 +820,17 @@ class MainScreen(Screen):
         view = self.query_one("#preview", ConvView)
         view.scroll_page_down() if direction > 0 else view.scroll_page_up()
 
+    def action_browser(self):
+        c = self.current()
+        msg = self.raws.get(loc(self.acct, c["msgs"][-1])) if c and c["msgs"] else None
+        if msg is None:
+            self.say("Nothing to open yet")
+            return
+        open_in_browser(msg)
+        self.say("Opened in the browser")
+
     LIST_ONLY = {"compose", "reply", "move", "toggle_read", "pick_move", "select", "undo", "scroll", "search",
-                 "folders", "single", "more", "sync", "clear"}
+                 "folders", "single", "more", "sync", "clear", "browser"}
 
     def check_action(self, action, parameters):
         """The list's keys are off while the folder pane or the search bar has the focus; the pane's own
@@ -850,9 +915,9 @@ class MainScreen(Screen):
         for name, a in self.app.accounts.items():
             open_ = name == self.pane_acct
             count = self.unread_in(a, "Mailbox")
-            label = Text(("▾ " if open_ else "▸ ") + name, "bold")
+            label = Text(("▾ " if open_ else "▸ ") + a.label, "bold")
             if count and not open_:
-                label.append(f"  {count}", "cyan")
+                label.append(f"  {count}", STYLE["unread"])
             opts.append(Option(label, id=f"a\0{name}"))
             if not open_:
                 continue
@@ -862,7 +927,7 @@ class MainScreen(Screen):
                 count = self.unread_in(a, f) if f not in ("Drafts", "Trash") else 0
                 t = Text("  " + f)
                 if count:
-                    t.append(f"  {count}", "cyan")
+                    t.append(f"  {count}", STYLE["unread"])
                 opts.append(Option(t, id=f"f\0{name}\0{f}"))
                 if name == self.acct.name and f == (keep or self.folder):
                     at = len(opts) - 1
@@ -912,17 +977,22 @@ class MainScreen(Screen):
             if not name:
                 return "Type a name"
             if name in acct.folders():
-                return f"{acct.name} already has a folder called {name}"
+                return f"{acct.label} already has a folder called {name}"
             return None
 
         def named(name):
             if name:
                 self.app.push_screen(MapScreen(acct, name, new=True), lambda ok: ok and self.mapped(acct, name))
 
-        self.app.push_screen(NameModal(f"New folder in {acct.name}", "Enter next: choose what feeds it", check), named)
+        self.app.push_screen(NameModal(f"New folder in {acct.label}", "Enter next: choose what feeds it", check), named)
 
     def mapped(self, acct, folder):
-        self.say(f"Saved what feeds {folder}")
+        if folder in acct.maps.get(acct.name, {}) and not acct.folders()[folder]:
+            self.say(f"Saved. {folder} shows nothing until a folder feeds it (E)")
+        elif folder in store.BASE and folder not in acct.maps.get(acct.name, {}):
+            self.say(f"{folder} is back to homer's default")
+        else:
+            self.say(f"Saved what feeds {folder}")
         self.fill_pane(keep=folder)
         if acct is self.acct and folder == self.folder:
             self.action_sync()
@@ -935,9 +1005,13 @@ class MainScreen(Screen):
             self.say(f"{folder} is found by homer and can't be remapped")
 
     def action_rename_folder(self):
+        pick = self.pane_pick()
+        if pick and pick[0] == "a":
+            self.rename_account(self.app.accounts[pick[1]])
+            return
         acct, folder = self.pane_folder()
         if not folder or folder not in acct.custom():
-            self.say("Only your own folders can be renamed")
+            self.say("Only accounts and your own folders can be renamed")
             return
 
         def check(name):
@@ -952,7 +1026,26 @@ class MainScreen(Screen):
                 self.fill_pane(keep=name)
                 self.say(f"Renamed {folder} to {name}")
 
-        self.app.push_screen(NameModal(f"Rename {folder}", "Enter rename  Esc cancel", check, folder), done)
+        self.app.push_screen(NameModal(f"Rename {folder}", "Enter rename", check, folder), done)
+
+    def rename_account(self, acct):
+        """Only the name homer shows changes; the config key stays what -a and homer login take."""
+        def check(name):
+            taken = {a.label for a in self.app.accounts.values() if a is not acct}
+            return f"Another account is called {name}" if name in taken else None
+
+        def done(name):
+            if name is None:
+                return
+            old, acct.label = acct.label, name or acct.name
+            names = {a.name: a.label for a in self.app.accounts.values() if a.label != a.name}
+            store.save_names(names)
+            self.fill_pane()
+            self.paint_header()
+            self.say(f"Renamed {old} to {acct.label}")
+
+        self.app.push_screen(NameModal(f"Rename the account {acct.label}",
+                                       f"Enter rename (empty: back to {acct.name})", check, acct.label), done)
 
     def action_delete_folder(self):
         acct, folder = self.pane_folder()
@@ -1178,7 +1271,7 @@ class ReaderScreen(Screen):
 
     def on_mount(self):
         n = len(self.conv["msgs"])
-        self.query_one(Header).set(f"homer · {self.acct.name} · {self.main.folder} › {self.conv['subject']}",
+        self.query_one(Header).set(f"homer · {self.acct.label} · {self.main.folder} › {self.conv['subject']}",
                                    f"{n} mail{'s' if n != 1 else ''}")
         self.paint(scroll=True)
         self.main.fetch_all(self.acct, self.conv["msgs"], lambda: self.is_attached and self.paint(scroll=True))
@@ -1239,16 +1332,10 @@ class ReaderScreen(Screen):
             self.app.push_screen(LinkPicker(self.links), lambda u: u and self.query_one(Status).say(u))
 
     def action_browser(self):
-        m = self.conv["msgs"][self.cur]
-        msg = self.main.raws.get(loc(self.acct, m))
-        if msg is None:
-            return
-        VIEW.mkdir(parents=True, exist_ok=True)
-        html = msg.get_body(("html",))
-        path = VIEW / f"{uuid.uuid4().hex}.{'html' if html is not None else 'txt'}"
-        path.write_text(part_text(html) if html is not None else body_text(msg))
-        open_external(path)
-        self.query_one(Status).say("Opened in the browser")
+        msg = self.main.raws.get(loc(self.acct, self.conv["msgs"][self.cur]))
+        if msg is not None:
+            open_in_browser(msg)
+            self.query_one(Status).say("Opened in the browser")
 
     def action_help(self):
         self.app.push_screen(HelpScreen("Keys · conversation", HELP["reader"]))
@@ -1323,7 +1410,7 @@ class ComposeScreen(Screen):
         a = st["acct"]
         fixed = st["kind"] != "new"
         self.query_one("#from", FromField).update(
-            Text(f"{a.name} · {a.email}") + Text("   (fixed)" if fixed else "   ← → to change", "dim"))
+            Text(f"{a.label} · {a.email}") + Text("   (fixed)" if fixed else "   ← → to change", "dim"))
         att = Text("Attach   ", "dim")
         if st["attach"]:
             total = 0
@@ -1780,8 +1867,13 @@ class QuitScreen(Box):
 
 # --- homer folder mapping (W16) ----------------------------------------------------------------------
 
+class Ticks(SelectionList):
+    BINDINGS = [Binding("space,enter", "select", "tick"), Binding("j", "cursor_down", show=False),
+                Binding("k", "cursor_up", show=False)]
+
+
 class MapScreen(Screen):
-    BINDINGS = [Binding("t", "target", "make it where moves go"), Binding("enter", "save", "save", priority=True),
+    BINDINGS = [Binding("t", "target", "make it where moves go"), Binding("s,ctrl+s", "save", "save"),
                 Binding("escape", "dismiss(False)", "cancel")]
 
     def __init__(self, acct, folder, new=False):
@@ -1793,17 +1885,17 @@ class MapScreen(Screen):
     def compose(self):
         yield Header()
         yield Static(id="explain")
-        yield SelectionList(id="srcs")
-        yield Static(Text(f"To create a new {self.acct.name} folder or label, use the CLI: "
+        yield Ticks(id="srcs")
+        yield Static(Text(f"To create a new {self.acct.label} folder or label, use the CLI: "
                           f"homer mkdir NAME -a {self.acct.name}", "dim"), id="mkdir")
         yield Status()
         yield Footer()
 
     def on_mount(self):
-        self.query_one(Header).set(f"homer · {self.acct.name} · folders › {self.folder}")
+        self.query_one(Header).set(f"homer · {self.acct.label} · folders › {self.folder}")
         self.query_one("#explain", Static).update(
-            f"Mail in these {self.acct.name} folders and labels shows in {self.folder}. "
-            f"Moves to {self.folder} go to the one marked ◆.")
+            f"Mail in these {self.acct.label} folders and labels shows in {self.folder}. "
+            f"Moves to {self.folder} go to the one marked ◆. Space or Enter ticks a folder, s saves.")
         self.query_one(Status).say("Loading the server's folders…")
         self.load()
         self.query_one("#srcs").focus()
@@ -1850,11 +1942,8 @@ class MapScreen(Screen):
 
     def action_save(self):
         chosen = list(self.query_one("#srcs", SelectionList).selected)
-        if not chosen:
-            self.query_one(Status).say(f"! Pick at least one folder to feed {self.folder}", True)
-            return
-        target = self.target if self.target in chosen else chosen[0]
-        self.acct.set_sources(self.folder, [target] + [c for c in chosen if c != target])
+        target = self.target if self.target in chosen else chosen[0] if chosen else None
+        self.acct.set_sources(self.folder, [target] + [c for c in chosen if c != target] if chosen else [])
         self.dismiss(True)
 
 
@@ -1920,12 +2009,38 @@ class Homer(App):
 
     def __init__(self, cfg, name):
         super().__init__()
-        maps = store.load_maps()
-        self.accounts = {n: store.Account(n, a, BACKENDS[a.get("provider", "gmail")], maps)
+        maps, names = store.load_maps(), store.load_names()
+        self.accounts = {n: store.Account(n, a, BACKENDS[a.get("provider", "gmail")], maps, names.get(n))
                          for n, a in cfg.get("accounts", {}).items() if a.get("provider", "gmail") in BACKENDS}
-        self.first, self.outbox = name, []
+        self.first, self.outbox, self.look, self.config_note = name, [], cfg.get("tui", {}), ""
+
+    def paint_roles(self):
+        """[tui] theme and [tui.colors] from the config; a bad entry keeps the default and is reported."""
+        bad = []
+        theme = self.look.get("theme")
+        if theme in self.available_themes:
+            self.theme = theme
+        elif theme:
+            bad.append(f"theme {theme}")
+        css = self.get_css_variables()
+        for role, default in ROLES.items():
+            for style in (self.look.get("colors", {}).get(role), default):
+                if not isinstance(style, str):
+                    continue
+                style = re.sub(r"\$([\w-]+)", lambda m: css.get(m[1], m[0]), style)
+                try:
+                    Style.parse(style)
+                except StyleSyntaxError:
+                    bad.append(f"colors.{role}")
+                    continue
+                STYLE[role] = style
+                break
+        unknown = set(self.look.get("colors", {})) - set(ROLES)
+        bad += [f"colors.{r} (roles: {', '.join(ROLES)})" for r in sorted(unknown)]
+        self.config_note = "! [tui] in your config: ignored " + ", ".join(bad) if bad else ""
 
     def on_mount(self):
+        self.paint_roles()
         if self.accounts:
             self.push_screen(MainScreen(self.accounts.get(self.first) or next(iter(self.accounts.values()))))
         else:

@@ -15,6 +15,7 @@ HOMER_URL = "https://github.com/rirzoo/homer"
 FOOTER_TEXT = f"Sent with homer ({HOMER_URL})"
 FOOTER_HTML = f'<p>Sent with <a href="{HOMER_URL}">homer</a></p>'
 FOLDERS_FILE = CONFIG.parent / "folders.toml"
+NAMES_FILE = CONFIG.parent / "names.toml"  # what the TUI calls each account; the config key never changes
 CACHE = Path("~/.cache/homer/tui").expanduser()
 BASE = ("Mailbox", "Drafts", "Archive", "Trash")
 EDITABLE = ("Mailbox", "Archive")  # Drafts and Trash are found by homer (D4, W2)
@@ -96,6 +97,19 @@ def save_maps(maps):
     FOLDERS_FILE.write_text("\n".join(lines))
 
 
+def load_names():
+    try:
+        return tomllib.loads(NAMES_FILE.read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def save_names(names):
+    NAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NAMES_FILE.write_text("# Written by homer's TUI: the name shown for each account.\n" + "".join(
+        f"{json.dumps(k, ensure_ascii=False)} = {json.dumps(v, ensure_ascii=False)}\n" for k, v in names.items()))
+
+
 def when_dt(when):
     if not when:
         return datetime.min.replace(tzinfo=timezone.utc)
@@ -106,8 +120,9 @@ def when_dt(when):
 class Account:
     """One configured account: its backend, homer folders and on-disk cache."""
 
-    def __init__(self, name, acct, backend, maps):
+    def __init__(self, name, acct, backend, maps, label=None):
         self.name, self.acct, self.backend, self.maps = name, acct, backend, maps
+        self.label = label or name
         self.email = acct["email"]
         self.me = {self.email.lower()}
         self.dir = CACHE / name
@@ -144,7 +159,11 @@ class Account:
         return srcs[0]
 
     def set_sources(self, folder, sources):
-        self.maps.setdefault(self.name, {})[folder] = list(sources)
+        own = self.maps.setdefault(self.name, {})
+        if sources or folder not in BASE:
+            own[folder] = list(sources)
+        else:
+            own.pop(folder, None)  # nothing ticked: Mailbox and Archive go back to homer's default
         save_maps(self.maps)
 
     def rename(self, old, new):
