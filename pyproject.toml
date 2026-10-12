@@ -15,4 +15,4 @@ dependencies = ["textual>=8.2"]  # only the TUI imports it
 homer = "homer.cli:main"
 
 [tool.setuptools]
-packages = ["homer"]
+packages = ["homer", "homer.tui"]

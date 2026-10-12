@@ -328,7 +328,7 @@ except ModuleNotFoundError:
 else:
     with tempfile.TemporaryDirectory() as tmp:
         store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
-        tui.DRAFTS, tui.SEND_DELAY = Path(tmp) / "drafts", 1
+        tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 1
         box = {"INBOX": [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)],
                "Sent": [], "All": [], "Trash": []}
         done = []
@@ -343,7 +343,7 @@ else:
             special_folders=lambda n, a: {r"\Inbox": "INBOX", r"\Sent": "Sent", r"\All": "All", r"\Trash": "Trash"},
             summaries=lambda n, a, f, k, q=None: [dict(m) for m in box[f]], move=move, mark=lambda *a: None,
             fetch_raw=lambda n, a, f, ref: orig.as_bytes(), send=lambda n, a, msg, rcpts: done.append(msg))
-        tui.BACKENDS = {"gmail": fake}
+        tui.app.BACKENDS = {"gmail": fake}
 
         async def drive():
             app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
@@ -454,7 +454,7 @@ else:
             fetch_raw=slow_raw, mark=lambda *a: None)
 
         async def drive3():
-            tui.BACKENDS = {"gmail": fake3}
+            tui.app.BACKENDS = {"gmail": fake3}
             store.CACHE = Path(tmp) / "cache3"
             app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
             async with app.run_test(size=(140, 30)) as pilot:
