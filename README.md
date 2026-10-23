@@ -21,8 +21,31 @@ For going through mail yourself, run `homer` on its own to get a full-screen int
 
 The command line uses only the Python standard library. The TUI uses Textual, which installs with Homer. Passwords and tokens are stored in your system keyring, not in files.
 
+## Homer at work
+
+These recordings run against a test server with made-up mail on two accounts, `work` and `personal`. [Development](#development) shows how to set it up.
+
+### With an agent
+
+Claude Code, using the example skill from [Using Homer from an agent](#using-homer-from-an-agent), is asked what's unread on `work`, then told to reply to Priya and archive the CI mail. It shows you the reply and waits for your OK before it sends:
+
+![Claude Code listing unread mail with homer, archiving one and sending a reply after approval](media/agent.gif)
+
+### On the command line
+
+Listing mail, reading a message and saving its attachment, replying in the same thread, and archiving a newsletter on the other account:
+
+![homer list, read --save, reply and move in a terminal](media/cli.gif)
+
+### In the TUI
+
+Opening a conversation, writing a reply in `vi` and sending it, switching to the other account from the folder pane, and trying themes with `ctrl+t`. The recording skips most of the 10-second countdown before the reply goes out.
+
+![The Homer TUI: a conversation, a reply sent from vi, the folder pane and the theme screen](media/tui.gif)
+
 ## Contents
 
+- [Homer at work](#homer-at-work)
 - [Requirements](#requirements)
 - [Install](#install)
   - [Fedora](#fedora)
@@ -296,6 +319,8 @@ You can add your contacts' addresses and a signature to the same file. Codex and
 
 The screen has two panes: your mail on the left and the conversation under the cursor on the right. `f` opens a third pane on the left with your folders and your other accounts, and closes again once you pick one. A row is a whole conversation, so your replies sit next to the mail they answer (`T` switches to one row per mail). Below 100 columns you get one pane at a time.
 
+![The work Mailbox on the left and the conversation under the cursor on the right](media/tui.png)
+
 Nothing waits on the server. Archive, delete, move and mark take effect on screen at once and sync in the background, and `u` undoes the last one. If the server refuses, the row comes back and the status line says why. Mail you've already seen is cached, so the list shows up the moment Homer starts.
 
 | Key | In the list | In a conversation (`Enter`) |
@@ -340,6 +365,8 @@ A sent mail appears at the top of Mailbox with a 10-second countdown, during whi
 Unread mail is marked `●` and its sender is in the `unread` colour. Mail you sent is marked `→`, with the recipient in the `sent` colour. When you've replied in a conversation, its mail count `(3)` takes the `thread` colour. In a conversation, your own mails have a bar down their left side.
 
 `ctrl+t` opens the theme and colour screen from anywhere in the TUI. The list on the left shows each theme's colours on its own background. Beside it, a sample mailbox and conversation are drawn the way Homer draws your mail, and each theme applies as the cursor reaches it. `Tab` moves to the colour list. There `←` `→` step a colour through the theme's palette (primary, secondary, accent, success, warning, error, foreground, or none), `b` `i` `d` toggle bold, italic and dim, and `x` puts the default back. `Enter` keeps it all and `Esc` puts back what you had.
+
+![The ctrl+t screen: themes and colour roles beside a sample mailbox drawn in the theme under the cursor](media/tui-themes.png)
 
 Homer stores each colour as the theme's name for it, such as `$accent`, so when you switch themes every role takes the new theme's version of that colour. Your picks go to `~/.config/homer/tui.toml`. You can also set the theme and colours by hand in the config file, and what you pick with `ctrl+t` wins over it:
 
@@ -403,6 +430,15 @@ The Fedora package is built from `homer.spec`. Copr runs `.copr/Makefile` to mak
 make -f .copr/Makefile srpm outdir=/tmp/homer-srpm
 rpmbuild --rebuild /tmp/homer-srpm/homer-*.src.rpm
 ```
+
+The recordings and screenshots in this README come from `demo/`. `demo/up.sh /tmp/maya` starts a [GreenMail](https://greenmail-mail-test.github.io/greenmail/) test server in podman, fills two made-up accounts with mail and writes a throwaway home in `/tmp/maya`. Its `bin/` has a `homer` that runs this checkout and a `secret-tool` that always answers with the test password, so your own config and keyring stay out of it. GreenMail doesn't offer STARTTLS, which Homer needs for SMTP, so `demo/relay.py` sits in front of it and also files a copy of each sent mail in Sent, the way Gmail does. [VHS](https://github.com/charmbracelet/vhs) records the tapes into `media/`:
+
+```sh
+demo/up.sh /tmp/maya && vhs demo/cli.tape
+demo/up.sh /tmp/maya && vhs demo/tui.tape     # run up.sh before each tape, so both start from the same mail
+```
+
+`/tmp/maya/.claude/skills/homer-mail` holds the example skill from [Using Homer from an agent](#using-homer-from-an-agent), set up for these two accounts. To record an agent, start it in `/tmp/maya` with `HOMER_CONFIG=/tmp/maya/.config/homer/accounts.toml` and `/tmp/maya/bin` first on your PATH. With Claude Code, add `--setting-sources project` to keep your own skills out of it.
 
 To release a new version, bump `Version` in `homer.spec` and `pyproject.toml` together and add a `%changelog` entry. dnf only upgrades when the version or release goes up.
 
