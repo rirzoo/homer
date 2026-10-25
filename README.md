@@ -220,7 +220,7 @@ homer         [-a ACCT]                          open the TUI (same as homer tui
 
 `--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
 
-Homer keeps its mail connections open between commands. The first command starts a small background process that stays signed in, and later commands run through it instead of connecting and logging in again. That takes a Gmail `list` from about 2 seconds to about 1, and an Outlook one from about 1 second to 0.3, which adds up when an agent runs `list`, `read` and `reply` in a row. The process quits after 10 minutes without a command, and a fresh one takes over when Homer is updated. Only your user can reach it. `homer login` and the TUI don't use it, and `HOMER_DAEMON=0` turns it off.
+Homer keeps its mail connections open between commands. The first command starts a small background process that stays signed in, and later commands run through it instead of connecting and logging in again. That takes a Gmail `list` from about 2 seconds to about 1, and an Outlook one from about 1 second to 0.3, which adds up when an agent runs `list`, `read` and `reply` in a row. The process quits after 10 minutes without a command, and a fresh one takes over when Homer is updated. Only your user can reach it. `homer login`, `homer rules` and the TUI don't use it, and `HOMER_DAEMON=0` turns it off.
 
 `reply` answers the sender of message `ID` (add `--all` to include everyone else on it). It adds "Re:" to the subject, quotes the original under your text, and sets the headers mail apps use to keep the reply in the same conversation. Replying to a message you sent yourself goes to its original recipients, which is handy for a follow-up.
 
@@ -400,7 +400,7 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 - `homer --help` and `homer <command> --help` show all options.
 - An `AADSTS...` error or "Need admin approval" at sign-in means your organisation hasn't approved the app. See Option B.
 - `rules need the MailboxSettings.ReadWrite permission`: see [Setting up rules on Microsoft 365](#setting-up-rules-on-microsoft-365).
-- `invalid_grant` from `homer rules` on Gmail, about a week after setup, means the Google app is in *Testing*, where sign-ins last 7 days. Run `homer login -a gmail --rules` again, or publish the app (step 2 of [Setting up rules on Gmail](#setting-up-rules-on-gmail)).
+- About a week after you set up Gmail filters, `homer rules` may say that Google ended Homer's access, and open the sign-in page. Google does that every 7 days while the app is in *Testing*. Sign in again and the command carries on; if nobody signs in within 5 minutes, it gives up. To stop the weekly sign-in, publish the app (step 2 of [Setting up rules on Gmail](#setting-up-rules-on-gmail)).
 - `graph 403` means the token doesn't have mail permissions. Check the app's API permissions or set `scope` as shown above, then run `homer login` again.
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.

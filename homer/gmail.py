@@ -379,6 +379,8 @@ def _google_login(name, acct):
             "code_challenge": challenge, "code_challenge_method": "S256"})
         print(f"Sign in to let Homer manage the filters of {acct['email']}:\n{url}", file=sys.stderr, flush=True)
         webbrowser.open(url)
+        srv.timeout = 300  # so an agent's command can't hang on a sign-in nobody finishes
+        srv.handle_timeout = lambda: got.setdefault("error", "no answer from the browser in 5 minutes")
         while "code" not in got and "error" not in got:  # skips the browser's /favicon.ico request
             srv.handle_request()
     if "code" not in got or got.get("state") != state:
@@ -399,8 +401,13 @@ def _api(name, acct, path, data=None, method=None):
         rt = secret_get(name, "refresh_token") or die(f"Gmail filters aren't linked yet; run: homer login -a {name} --rules")
         tok = post_form(GOOGLE_TOKEN, {"grant_type": "refresh_token", "refresh_token": rt,
                                        "client_id": cid, "client_secret": secret})
-        _gtokens[name] = tok.get("access_token") or die(
-            f"{tok.get('error_description', tok)}\nrun: homer login -a {name} --rules")
+        if tok.get("error") == "invalid_grant":  # an app in Testing loses its sign-in after 7 days
+            print("homer: Google ended Homer's access to your filters (it does that every 7 days for apps in "
+                  "Testing); opening the sign-in page", file=sys.stderr, flush=True)
+            _google_login(name, acct)  # stores the new token in _gtokens
+        else:
+            _gtokens[name] = tok.get("access_token") or die(
+                f"{tok.get('error_description', tok)}\nrun: homer login -a {name} --rules")
     return http_json(GMAIL_API + path, _gtokens[name], data, method)
 
 

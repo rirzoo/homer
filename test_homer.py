@@ -339,6 +339,40 @@ assert n == {"criteria": {"from": "a@x.com OR b@x.com", "query": "invoice", "sub
              "action": {"addLabelIds": ["Label_9", "STARRED"], "removeLabelIds": ["INBOX"]}}  # old folder label swapped
 assert gmail._native({**blank, "from": ["z@x.com"], "delete": True}) == {
     "criteria": {"from": "z@x.com"}, "action": {"addLabelIds": ["TRASH"]}}
+
+# a lapsed Google sign-in (7 days, for apps in Testing) signs in again and carries on; one nobody finishes times out
+import http.server  # noqa: E402
+import io  # noqa: E402
+import contextlib  # noqa: E402
+
+gacct = {"email": "me@gmail.com", "client_id": "c", "client_secret": "s"}
+real = gmail.post_form, gmail.secret_get, gmail.http_json, gmail._google_login, gmail.webbrowser.open
+logins = []
+gmail.post_form = lambda url, data: {"error": "invalid_grant"}
+gmail.secret_get = lambda name, kind: "rt"
+gmail.http_json = lambda url, tok, data=None, method=None: {"filter": [], "token": tok}
+gmail._google_login = lambda name, acct: logins.append(name) or gmail._gtokens.update({name: "fresh"})
+gmail._gtokens.clear()
+with contextlib.redirect_stderr(io.StringIO()) as err:
+    assert gmail._api("g", gacct, "/settings/filters")["token"] == "fresh" and logins == ["g"]
+assert "opening the sign-in page" in err.getvalue()
+gmail.post_form, gmail.secret_get, gmail.http_json, gmail._google_login, gmail.webbrowser.open = real
+gmail.webbrowser.open = lambda url: True
+
+
+class QuickServer(http.server.HTTPServer):
+    timeout = property(lambda self: 0.2, lambda self, v: None)  # 5 minutes is long for a test
+
+
+real_server, http.server.HTTPServer = http.server.HTTPServer, QuickServer
+try:
+    with contextlib.redirect_stderr(io.StringIO()):
+        gmail._google_login("g", gacct)
+    raise AssertionError("sign-in without a browser answer should give up")
+except SystemExit as e:
+    assert "no answer from the browser" in str(e)
+finally:
+    http.server.HTTPServer, gmail.webbrowser.open = real_server, real[4]
 print("rules ok")
 
 # the background helper: a command runs as `homer` would, over a real socket, and a code change makes it step aside
