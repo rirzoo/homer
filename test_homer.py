@@ -361,7 +361,7 @@ except ModuleNotFoundError:
 else:
     with tempfile.TemporaryDirectory() as tmp:
         store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
-        tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 1
+        tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 2  # ticks are 1s apart from mount: 1 could fire at once
         box = {"INBOX": [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)],
                "Sent": [], "All": [], "Trash": []}
         done = []
@@ -396,7 +396,7 @@ else:
                 await pilot.pause(0.3)
                 assert isinstance(app.screen, tui.MainScreen), str(app.screen.query_one(tui.Status).render())
                 assert app.screen.convs[0]["out"]["state"] == "wait"
-                await pilot.pause(2)
+                await pilot.pause(3)
                 sent = done[-1]
                 assert sent["To"] == "bob@x.com" and sent["Subject"] == "Hi"
                 assert sent.get_body(("plain",)).get_content().rstrip().endswith(store.FOOTER_TEXT)
