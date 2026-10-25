@@ -534,7 +534,7 @@ except ModuleNotFoundError:
 else:
     with tempfile.TemporaryDirectory() as tmp:
         store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
-        tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 1
+        tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 2  # the countdown's first tick can come at once, so 1 could send before the check
 
         # S2: `v` pages block scripts and remote loads, after the doctype so the page keeps standards mode
         tui.base.VIEW, opened, real_open = Path(tmp) / "view", [], tui.base.open_external
@@ -585,7 +585,7 @@ else:
                 await pilot.pause(0.3)
                 assert isinstance(app.screen, tui.MainScreen), str(app.screen.query_one(tui.Status).render())
                 assert app.screen.convs[0]["out"]["state"] == "wait"
-                await pilot.pause(2)
+                await pilot.pause(3)
                 sent = done[-1]
                 assert sent["To"] == "bob@x.com" and sent["Subject"] == "Hi"
                 assert sent.get_body(("plain",)).get_content().rstrip().endswith(store.FOOTER_TEXT)
