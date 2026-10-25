@@ -3,6 +3,7 @@
 from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, VerticalScroll
+from textual.css.styles import Styles
 from textual.widgets import Input, OptionList, Static
 
 
@@ -14,6 +15,13 @@ class ConvView(VerticalScroll):
         await self.mount_all(Static(b, classes="mail") for b in blocks)
         if focus is not None and focus + 1 < len(self.children):
             self.scroll_to_widget(self.children[focus + 1], top=True, animate=False)
+
+    def text_width(self, fallback):
+        """Columns a mail's text gets: the pane less the frame and padding the theme puts round each mail."""
+        v = self.app.get_css_variables()
+        frame = Styles.parse(f"border: {v['homer-card']}; border-left: {v['homer-card-left']}; "
+                             f"padding: {v['homer-card-pad']};", ("", ""))
+        return (self.scrollable_content_region.width or fallback) - frame.gutter.width
 
     def render_blocks(self, blocks, focus=None):
         self.run_worker(self.show(blocks, focus), group="render", exclusive=True)

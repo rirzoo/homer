@@ -522,4 +522,29 @@ else:
                 await check(1)
 
         asyncio.run(drive3())
+
+        # the kitty window: synthwave's page and glass cards are made see-through in exactly the colours Textual
+        # paints them, and a theme without images clears the image and the list again
+        from homer.tui import kitty
+
+        async def drive4():
+            app = tui.Homer({"accounts": {}}, None)
+            async with app.run_test(size=(140, 30)) as pilot:
+                await pilot.pause(0.3)
+                app.paint_roles("synthwave")
+                app.action_pick_theme()
+                await pilot.pause(0.6)
+                v = app.get_css_variables()
+                opts = dict(o.split("=", 1) for o in kitty.look("synthwave", "sunset", v))
+                assert opts["font_family"] == "Space Mono" and Path(opts["background_image"]).is_file()
+                clear = dict(c.split("@") for c in opts["transparent_background_colors"].split())
+                card = app.screen.query_one("#sampleconv .mail")
+                assert card.background_colors[1].hex in clear and app.screen.styles.background.hex in clear, clear
+                themes = app.screen.query_one("#themes")
+                assert themes.has_focus and themes.background_colors[1].hex in clear  # focus tints it
+                assert app.screen.query_one("#backbox").display  # synthwave has images to pick from
+                opts = dict(o.split("=", 1) for o in kitty.look("nord", None, v))
+                assert opts["background_image"] == "none" and opts["transparent_background_colors"] == ""
+
+        asyncio.run(drive4())
         print("tui ok")

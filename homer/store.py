@@ -105,12 +105,14 @@ def load_state():
 
 
 def save_state(state):
-    """theme = "nord", then [colors] (role -> style) and [names] (account config key -> name shown)."""
+    """theme = "nord", then [colors] (role -> style), [backgrounds] (theme -> image) and [names] (account config
+    key -> name shown)."""
     q = lambda v: json.dumps(v, ensure_ascii=False)  # JSON strings are valid TOML basic strings
-    lines = ["# Written by homer's TUI: the theme and colours (ctrl+t) and account names (R in the folder pane)."]
+    lines = ["# Written by homer's TUI: the theme, colours and backgrounds (ctrl+t) and account names (R in the "
+             "folder pane)."]
     if state.get("theme"):
         lines.append(f"theme = {q(state['theme'])}")
-    for table in ("colors", "names"):
+    for table in ("colors", "backgrounds", "names"):
         if state.get(table):
             lines += ["", f"[{table}]"] + [f"{q(k)} = {q(v)}" for k, v in state[table].items()]
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)

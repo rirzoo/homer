@@ -298,7 +298,7 @@ class MainScreen(Screen):
             view.render_blocks([t])
             return
         last = len(c["msgs"]) - 1
-        width = view.scrollable_content_region.width or 50
+        width = view.text_width(50)
         view.render_blocks(conv_blocks(c, self.acct, self.raws, {last}, width)[0])
         m = c["msgs"][last]
         if loc(self.acct, m) not in self.raws:

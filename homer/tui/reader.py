@@ -49,7 +49,7 @@ class ReaderScreen(Screen):
 
     def paint(self, scroll=False):
         view = self.query_one("#reader", ConvView)
-        width = (view.scrollable_content_region.width or self.size.width) - 2
+        width = view.text_width(self.size.width) - 2
         blocks, self.links, self.parts = conv_blocks(self.conv, self.acct, self.main.raws, self.opened, width,
                                                      full=True, cursor=self.cur)
         view.render_blocks(blocks, self.cur if scroll else None)

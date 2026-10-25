@@ -369,13 +369,15 @@ Unread mail is marked `●` and its sender is in the `unread` colour. Mail you s
 
 `ctrl+t` opens the theme and colour screen from anywhere in the TUI. The list on the left shows each theme's colours on its own background. Beside it, a sample mailbox and conversation are drawn the way Homer draws your mail, and each theme applies as the cursor reaches it. `Tab` moves to the colour list. There `←` `→` step a colour through the theme's palette (primary, secondary, accent, success, warning, error, foreground, or none), `b` `i` `d` toggle bold, italic and dim, and `x` puts the default back. `Enter` keeps it all and `Esc` puts back what you had.
 
+Most of the themes come from Textual and change only colours. Homer adds four that also change the borders, the header bar and the frame around each mail: `phosphor` (soft green on black with faint scanlines, like an old terminal), `blueprint` (navy, with each mail on a see-through glass card over a grid), `synthwave` (deep violet with neon pink and cyan) and `paper` (ink on cream with ruled lines and a red margin, the light one). Homer leaves out tokyo-night, catppuccin-frappe, ansi-dark and atom-one-light, which look almost the same as themes it keeps.
+
 ![The ctrl+t screen: themes and colour roles beside a sample mailbox drawn in the theme under the cursor](media/tui-themes.png)
 
 Homer stores each colour as the theme's name for it, such as `$accent`, so when you switch themes every role takes the new theme's version of that colour. Your picks go to `~/.config/homer/tui.toml`. You can also set the theme and colours by hand in the config file, and what you pick with `ctrl+t` wins over it:
 
 ```toml
 [tui]
-theme = "nord"          # any Textual theme: gruvbox, dracula, tokyo-night, textual-light, ...
+theme = "nord"          # any theme in the ctrl+t list: gruvbox, dracula, phosphor, paper, ...
 
 [tui.colors]
 unread   = "bold $primary"
@@ -387,6 +389,19 @@ selected = "bold $warning"
 ```
 
 Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). A fixed colour like `#ffcc00` also works, but it stays the same in every theme. If an entry doesn't parse, Homer keeps the default for it and says so in the status line.
+
+### Fonts and background images
+
+A terminal draws every character in its own font, so a theme can't change the font or put a picture behind the text. [kitty](https://sw.kovidgoyal.net/kitty/) can do both for a single window while it runs, so Homer can open itself in a kitty window of its own:
+
+```toml
+[tui]
+window = "kitty"
+```
+
+With this set, `homer` opens a kitty window and your terminal gets its prompt back. In that window Homer's own themes use their own font: VT323 for phosphor, Share Tech Mono for blueprint, Space Mono for synthwave and Monaspace Radon for paper. Homer ships these fonts and copies them into `~/.local/share/fonts/homer` the first time. They're all under the SIL Open Font License, which sits next to them in `homer/tui/fonts/`.
+
+Synthwave also comes with two background images, a sunset and a night sky. Pick one, or none, in the Background list on the `ctrl+t` screen. Homer makes the page, the panels and the mail cards see-through, so the image shows behind your mail, and the font and image change as the cursor moves. Other themes get kitty's default font and no image. If kitty isn't installed, Homer runs where you started it and says so in the status line (`sudo dnf install kitty` installs it on Fedora).
 
 ### Planned for the TUI
 
