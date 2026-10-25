@@ -75,6 +75,7 @@ Opening a conversation, writing a reply in `vi` and sending it, switching to the
 
 - Python 3.11+
 - Linux with `secret-tool` (libsecret): Fedora `sudo dnf install libsecret`, Debian/Ubuntu `sudo apt install libsecret-tools`
+- Optional: [kitty](https://sw.kovidgoyal.net/kitty/), for the fonts and background images of Homer's own themes (see [Fonts and background images](#fonts-and-background-images))
 - `gpg` (GnuPG), only for [signing mail](#signing-mail): Fedora `sudo dnf install gnupg2`, Debian/Ubuntu `sudo apt install gnupg`
 
 ## Install
@@ -496,7 +497,7 @@ To remove what Homer keeps, run `secret-tool clear service homer` for the passwo
 python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, OpenPGP signing, search syntax), `homer/daemon.py` (the background service that syncs mail for the TUI, sends notifications and keeps connections open for commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, OpenPGP signing, search syntax), `homer/daemon.py` (the background service that syncs mail for the TUI, sends notifications and keeps connections open for commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them). `homer/tui/themes.py` holds Homer's own themes, and `homer/tui/kitty.py` opens the kitty window and sets it up for each theme, with the fonts in `homer/tui/fonts/` and the images in `homer/tui/backgrounds/`. `demo/backgrounds.py` draws the synthwave images.
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without touching the ID cache that `list` keeps for agents.
 
