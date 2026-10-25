@@ -60,6 +60,7 @@ class MainScreen(Screen):
         self.token = 0  # bumped on every switch, so a late sync result for another view is dropped
         self.syncing, self.health, self.synced_at, self.loaded_once = False, "", None, False
         self.raws, self.undo = {}, None
+        self.picked = {}  # (account, homer folder) -> the server folder last moved into, offered first next time
         self.known = set()  # every mail seen in this view, so undo and moves never count as new mail
         self.pane_acct = acct.name
         self.preview_timer = self.read_timer = None
@@ -365,19 +366,28 @@ class MainScreen(Screen):
 
     # --- moving, marking, undo (D15, D16) ----------------------------------------------------------
 
-    def action_move(self, dest):
+    def action_move(self, dest, target=None):
         convs = self.targets()
         if not convs:
             return
         if dest == self.folder and not self.everywhere:
             self.say(f"Already in {dest}" + (". Homer doesn't delete mail for good" if dest == "Trash" else ""))
             return
+        srcs = self.acct.folders().get(dest, [])
+        if target is None and dest != "Mailbox" and len(srcs) > 1:  # which of its server folders? (D26)
+            last = self.picked.get((self.acct.name, dest))
+            label = f'"{convs[0]["subject"]}"' if len(convs) == 1 else f"{len(convs)} conversations"
+            title = f"Archive {label} into" if dest == "Archive" else f"Move {label} to {dest}, into"
+            self.app.push_screen(MovePicker(title, sorted(srcs, key=lambda s: s != last)),
+                                 lambda t: t and self.action_move(dest, t))
+            return
         try:
-            target = self.acct.target(dest)
+            target = target or self.acct.target(dest)
         except ValueError as e:
             self.say(f"! {e}", True)
             return
-        skip = set(self.acct.folders().get(dest, []))
+        self.picked[(self.acct.name, dest)] = target
+        skip = set(srcs)
         jobs = {}
         for c in convs:
             for m in c["msgs"]:

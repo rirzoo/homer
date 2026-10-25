@@ -24,7 +24,11 @@ class MapScreen(Screen):
         super().__init__()
         self.acct, self.folder, self.new = acct, folder, new
         self.server, self.chosen = [], list(acct.folders().get(folder, []))
-        self.target = self.chosen[0] if self.chosen else None
+        # only Mailbox has a fixed target (its inbox); moving into any other folder fed by several asks which (D26)
+        self.target = self.chosen[0] if self.chosen and folder == "Mailbox" else None
+
+    def check_action(self, action, parameters):
+        return action != "target" or self.folder == "Mailbox"
 
     def compose(self):
         yield Header()
@@ -39,7 +43,9 @@ class MapScreen(Screen):
         self.query_one(Header).set(f"homer · {self.acct.label} · folders › {self.folder}")
         self.query_one("#explain", Static).update(
             f"Mail in these {self.acct.label} folders and labels shows in {self.folder}. "
-            f"Moves to {self.folder} go to the one marked ◆. Space or Enter ticks a folder, s saves.")
+            + (f"Moves to {self.folder} go to the one marked ◆. " if self.folder == "Mailbox" else
+               f"When you move mail to {self.folder} and more than one is ticked, Homer asks which. ")
+            + "Space or Enter ticks a folder, s saves.")
         self.query_one(Status).say("Loading the server's folders…")
         self.load()
         self.query_one("#srcs").focus()

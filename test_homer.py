@@ -575,4 +575,34 @@ else:
                 assert 'No match for "zzz"' in str(app.screen.query_one("#hint").render())
 
         asyncio.run(drive4())
+
+        # Archive fed by two server folders: e asks which, and offers the last one picked first next time
+        store.save_maps({"g": {"Archive": ["All", "Old"]}})
+        box.update(INBOX=[row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00"),
+                          row(2, "INBOX", "b@x.com", "t2", "2026-10-11T11:00:00+00:00")], Old=[], Sent=[])
+
+        async def drive5():
+            tui.app.BACKENDS = {"gmail": fake}
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                await pilot.press("e")
+                await pilot.pause(0.2)
+                assert isinstance(app.screen, tui.modals.MovePicker) and app.screen.choices == ["All", "Old"]
+                await pilot.press(*"old", "enter")
+                await pilot.pause(0.3)
+                assert done[-1] == ("INBOX", "Old") and len(app.screen.convs) == 1, (done[-1], app.screen.convs)
+                await pilot.press("e")
+                await pilot.pause(0.2)
+                assert app.screen.choices == ["Old", "All"]
+                await pilot.press("escape")
+                await pilot.pause(0.2)
+                assert done[-1] == ("INBOX", "Old") and len(app.screen.convs) == 1  # Esc moved nothing
+                store.save_maps({})
+                app.screen.acct.maps = {}
+                await pilot.press("e")
+                await pilot.pause(0.3)
+                assert done[-1] == ("INBOX", "All")  # one source: straight there
+
+        asyncio.run(drive5())
         print("tui ok")
