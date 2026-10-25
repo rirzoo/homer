@@ -194,6 +194,17 @@ def mkdir(name, acct, folder):
     _graph(name, acct, "/me/mailFolders", {"displayName": folder})  # ponytail: top-level only
 
 
+def rmdir(name, acct, folder):
+    """Moves the folder, mail and all, into Deleted Items, as Outlook does (Graph's DELETE skips straight past it).
+    Returns a note on where it went."""
+    fid = _folder_id(name, acct, folder)
+    if fid in WELL_KNOWN:
+        die(f"{folder!r} is one of Outlook's own folders and can't be deleted")
+    _graph(name, acct, f"/me/mailFolders/{urllib.parse.quote(fid)}/move", {"destinationId": "deleteditems"})
+    _folder_ids.pop((name, folder), None)
+    return "; it's in Deleted Items until you empty that"
+
+
 def move(name, acct, folder, refs, dest):
     """Returns the messages' new ids; Graph gives a moved message a new id."""
     dest_id = _folder_id(name, acct, dest)

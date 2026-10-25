@@ -135,6 +135,11 @@ def cmd_mkdir(a, cfg):
     print(f"created folder {a.folder!r}")
 
 
+def cmd_rmdir(a, cfg):
+    name, acct, backend = account(cfg, a)
+    print(f"deleted folder {a.folder!r}{backend.rmdir(name, acct, a.folder)}")
+
+
 def cmd_move(a, cfg):
     name, acct, backend = account(cfg, a)
     backend.move(name, acct, a.folder, a.ids, a.to)
@@ -247,6 +252,10 @@ def parser():
     p = sub.add_parser("mkdir", parents=[common], help="create a folder (Gmail: a label)")
     p.add_argument("folder")
     p.set_defaults(fn=cmd_mkdir)
+
+    p = sub.add_parser("rmdir", parents=[common], help="delete a folder (Gmail: the label; Outlook: to Deleted Items)")
+    p.add_argument("folder")
+    p.set_defaults(fn=cmd_rmdir)
 
     p = sub.add_parser("move", parents=[common, folder], help="move messages to another folder")
     p.add_argument("ids", nargs="+", help=id_help)

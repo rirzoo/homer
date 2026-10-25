@@ -166,6 +166,27 @@ assert got == [["INBOX"]] * 4 and FakeIMAP.peak == 1 and FakeIMAP.made == 1
 gmail._sessions["t"].m.dead = True  # server dropped the connection
 assert gmail.folders("t", {}) == ["INBOX"] and FakeIMAP.made == 2
 
+
+class FakeFolders(FakeIMAP):  # rmdir: Gmail only drops a label, other servers would delete the mail too
+    count, deleted = b"3", []
+    __enter__ = lambda self: self
+    __exit__ = lambda self, *a: None
+    select = lambda self, folder, readonly=False: ("OK", [self.count])
+    close = lambda self: None
+    delete = lambda self, folder: FakeFolders.deleted.append(folder) or ("OK", [b""])
+
+
+gmail._connect = lambda name, acct: FakeFolders()
+assert "All Mail" in gmail.rmdir("t", {}, "Old") and FakeFolders.deleted == ['"Old"']  # Gmail: no count check
+try:
+    gmail.rmdir("t", {"imap": "imap.example.com"}, "Full")
+    raise AssertionError("deleted a folder that still held mail")
+except SystemExit as e:
+    assert "still holds 3 messages" in str(e) and FakeFolders.deleted == ['"Old"']
+FakeFolders.count = b"0"
+assert gmail.rmdir("t", {"imap": "imap.example.com"}, "Empty") == "" and FakeFolders.deleted[-1] == '"Empty"'
+gmail._connect = lambda name, acct: FakeIMAP()
+
 calls = []
 
 

@@ -182,6 +182,22 @@ def mkdir(name, acct, folder):
         _ok(m.create(f'"{folder}"'), "create folder")
 
 
+def rmdir(name, acct, folder):
+    """Gmail drops the label and keeps its mail in All Mail; other servers delete the mail with the folder.
+    Returns a note on where the mail went."""
+    gm = acct.get("imap", "imap.gmail.com") == "imap.gmail.com"
+    with _connect(name, acct) as m:
+        if not gm:
+            typ, data = m.select(f'"{folder}"', readonly=True)
+            if typ == "OK":
+                if int(data[0]):
+                    die(f"{folder!r} still holds {int(data[0])} messages; move them out first, "
+                        "since deleting it on this server deletes them for good")
+                m.close()  # some servers won't delete the selected folder
+        _ok(m.delete(f'"{folder}"'), "delete folder")
+    return "; its mail is still in All Mail" if gm else ""
+
+
 def _uid_set(text):
     """Expand an IMAP UID set like 5:7,9 into ['5', '6', '7', '9']."""
     out = []

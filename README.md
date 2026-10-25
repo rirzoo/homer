@@ -13,7 +13,7 @@ $ homer read -a inst 2 --save ~/Downloads
 $ homer send -a gmail --to prof@uni.edu -s "Assignment 3" -b "Please find it attached." --attach a3.pdf
 ```
 
-You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create folders, move messages, mark them read or unread, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
+You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create and delete folders, move messages, mark them read or unread, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
@@ -207,6 +207,7 @@ homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] 
 homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html]
 homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NOTE] [--attach FILE ...] [--draft] [--html] [--attached]
 homer mkdir   FOLDER [-a ACCT]
+homer rmdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
 homer rules   [-a ACCT]                          list rules (Gmail: filters) with their ids
@@ -250,6 +251,7 @@ Provider differences:
 | `--search` | IMAP SEARCH: `'FROM "bob" SINCE 1-Oct-2026'` | Outlook search (KQL): `'from:bob subject:exam'` |
 | Folder names | as `homer folders` shows them, e.g. `"[Gmail]/Sent Mail"`, `"[Gmail]/Bin"` | display name, or `inbox`, `sentitems`, `drafts`, `deleteditems`, `junkemail`, `archive` |
 | Delete | `move ID --to "[Gmail]/Trash"` (`[Gmail]/Bin` in some regions) | `move ID --to deleteditems` |
+| `rmdir` | removes the label and leaves its mail in All Mail. Other IMAP servers delete the mail with the folder, so Homer refuses while it still holds any | moves the folder and its mail to Deleted Items |
 | Limits | | max 4 MB per message incl. attachments; `mkdir` creates top-level folders |
 
 Outlook numbers are reassigned on every `list`, so run `list` on the folder right before `read`/`move`/`mark`.
@@ -309,7 +311,7 @@ Use `homer` for all mail. `homer --help` and `homer <command> --help` list the o
 - Pass the body on stdin with a quoted heredoc (`<<'EOF'`) so quotes and `$` survive.
 - Answer a mail with `homer reply ID`, not `send`, so it stays in the same thread.
 - On Outlook accounts, IDs change with every `list`. Run `list` right before `read`, `move` or `mark`.
-- Ask me before adding, changing or removing a rule with `homer rules`.
+- Ask me before adding, changing or removing a rule with `homer rules`, and before deleting a folder with `homer rmdir`.
 - Before sending, show me the recipient, subject and body and wait for my OK. If unsure, use `--draft`.
 ```
 
@@ -348,7 +350,7 @@ Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `
 
 ### Folders
 
-Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. In that list `Space` or `Enter` ticks a folder and `s` saves. If you untick everything, Mailbox and Archive go back to their defaults, and a folder of your own stays but shows nothing. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
+Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. In that list `Space` or `Enter` ticks a folder and `s` saves. If you untick everything, Mailbox and Archive go back to their defaults, and a folder of your own stays but shows nothing. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` and `homer rmdir` for that.
 
 `R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/tui.toml`.
 

@@ -16,7 +16,7 @@ import time
 import traceback
 from pathlib import Path
 
-COMMANDS = {"folders", "list", "read", "send", "reply", "forward", "move", "mark", "mkdir", "rules"}
+COMMANDS = {"folders", "list", "read", "send", "reply", "forward", "move", "mark", "mkdir", "rmdir", "rules"}
 IDLE = 600  # seconds; matches gmail.IDLE, after which a cached IMAP session is replaced anyway
 MAX_AGE = 45 * 60  # access tokens last about an hour
 SOCK = Path(os.environ.get("XDG_RUNTIME_DIR") or Path("~/.cache/homer").expanduser()) / "homer.sock"
