@@ -5,6 +5,7 @@ import email
 import email.policy
 import re
 import subprocess
+import time
 import uuid
 from email.utils import formataddr, getaddresses
 from pathlib import Path
@@ -23,6 +24,9 @@ SEND_DELAY, READ_AFTER, SYNC_EVERY, WIDE, PAGE = 10, 2.0, 120, 100, 50
 CAUGHT = (Exception, SystemExit)  # backends die() with SystemExit; a worker must never take the app down
 ADDR = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 URL = re.compile(r"https?://[^\s<>\"'\]]+")
+# `v` pages: only the mail's own inline images and styles load; no scripts, no remote images or tracking (S2)
+CSP = ("""<meta http-equiv="Content-Security-Policy" """
+       """content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">""")
 # Colour roles, overridable in [tui.colors]; $names are the Textual theme's colours (README, "Colours")
 ROLES = {"unread": "bold $primary", "sent": "$success", "thread": "$success", "me": "bold $accent", "quote": "dim",
          "selected": "bold $warning"}
@@ -122,6 +126,14 @@ def inline(part):
         part["Content-ID"] or part.get_content_disposition() == "inline")
 
 
+def clean_view():
+    """Delete what `v` and attachments left in VIEW over a day ago (S4). Not at quit: the browser may still be
+    reading a file then."""
+    for f in VIEW.glob("*"):
+        if f.is_file() and f.stat().st_mtime < time.time() - 86400:
+            f.unlink(missing_ok=True)
+
+
 def open_in_browser(msg):
     """The mail as its sender formatted it, inline images included, in the browser."""
     VIEW.mkdir(parents=True, exist_ok=True)
@@ -135,6 +147,7 @@ def open_in_browser(msg):
             if not p.is_multipart() and p["Content-ID"]:
                 data = base64.b64encode(p.get_payload(decode=True) or b"").decode()
                 page = page.replace("cid:" + p["Content-ID"].strip("<>"), f"data:{p.get_content_type()};base64,{data}")
+        page = re.sub(r"(?i)^(\s*<!doctype[^>]*>)?", lambda m: (m[1] or "") + CSP, page, count=1)  # no quirks mode
         path = VIEW / f"{uuid.uuid4().hex}.html"
         path.write_text(page)
     open_external(path)

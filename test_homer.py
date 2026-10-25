@@ -41,6 +41,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert parsed.get_body(("plain",)).get_content().strip() == "Hi\nhomer"
     assert [p.get_filename() for p in homer.attachments(parsed)] == ["report.pdf"]
 
+    # S3: the cache and config folders are closed to other users, including ones made before the fix
+    homer.PRIVATE = (tmp / "cache" / "homer", tmp / "config")
+    homer.PRIVATE[1].mkdir(mode=0o755)
+    homer.private_dirs()
+    assert all(d.stat().st_mode & 0o777 == 0o700 for d in homer.PRIVATE)
+
 assert homer.html_to_text("<style>x{}</style><p>Hi&nbsp;there</p><p>bye</p>") == "Hi there\nbye"
 print("ok")
 
@@ -130,6 +136,8 @@ print("inline images + attached forward ok")
 # backends: one cached connection per account, one call at a time, reconnect once when it drops
 import imaplib  # noqa: E402
 import json  # noqa: E402
+import smtplib  # noqa: E402
+import ssl  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 from homer import gmail, outlook  # noqa: E402
@@ -154,6 +162,32 @@ class FakeIMAP:
     def shutdown(self):
         pass
 
+
+# S1: IMAP and SMTP check the server's certificate and name
+contexts, real = [], (imaplib.IMAP4_SSL, smtplib.SMTP, gmail._password)
+
+
+class FakeTLS:
+    def __init__(self, *a, ssl_context=None, **k):
+        contexts.extend([ssl_context] if a[0] == "imap.gmail.com" else [])
+
+    def login(self, *a, **k):
+        pass
+
+    def starttls(self, context=None):
+        contexts.append(context)
+
+    send_message = login
+    __enter__ = lambda self: self
+    __exit__ = lambda self, *a: None
+
+
+imaplib.IMAP4_SSL = smtplib.SMTP = FakeTLS
+gmail._password = lambda name: "pw"
+gmail._connect("t", {"email": "me@x.com"})
+gmail.send("t", {"email": "me@x.com"}, None, [])
+imaplib.IMAP4_SSL, smtplib.SMTP, gmail._password = real
+assert len(contexts) == 2 and all(c.verify_mode == ssl.CERT_REQUIRED and c.check_hostname for c in contexts)
 
 gmail._connect = lambda name, acct: FakeIMAP()
 got = []
@@ -320,6 +354,9 @@ assert gmail._native({**blank, "from": ["z@x.com"], "delete": True}) == {
     "criteria": {"from": "z@x.com"}, "action": {"addLabelIds": ["TRASH"]}}
 print("rules ok")
 
+# S5: the CLI prints mail without terminal control characters, keeping newlines and tabs
+assert cli.plain("a\x1b[31mb\r\x9bc\x07\n\td") == "a[31mbc\n\td"
+
 # the background helper: a command runs as `homer` would, over a real socket, and a code change makes it step aside
 import os  # noqa: E402
 import sys  # noqa: E402
@@ -362,6 +399,22 @@ else:
     with tempfile.TemporaryDirectory() as tmp:
         store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
         tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 1
+
+        # S2: `v` pages block scripts and remote loads, after the doctype so the page keeps standards mode
+        tui.base.VIEW, opened, real_open = Path(tmp) / "view", [], tui.base.open_external
+        tui.base.open_external = opened.append
+        html = email.message.EmailMessage()
+        html.set_content("<!DOCTYPE html><p>hi<img src='https://t.example/pixel'></p>", subtype="html")
+        tui.base.open_in_browser(html)
+        tui.base.open_external = real_open
+        assert opened[0].read_text().startswith("<!DOCTYPE html>" + tui.base.CSP)
+
+        # S4: what was opened over a day ago is deleted, what was opened just now stays
+        old = tui.base.VIEW / "old.pdf"
+        old.write_bytes(b"x")
+        os.utime(old, (time.time() - 90000,) * 2)
+        tui.base.clean_view()
+        assert list(tui.base.VIEW.iterdir()) == [opened[0]]
         box = {"INBOX": [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)],
                "Sent": [], "All": [], "Trash": []}
         done = []

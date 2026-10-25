@@ -18,10 +18,19 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 CONFIG = Path(os.environ.get("HOMER_CONFIG", "~/.config/homer/accounts.toml")).expanduser()
+PRIVATE = (Path("~/.cache/homer").expanduser(), Path("~/.config/homer").expanduser())
 
 
 def die(msg):
     sys.exit(f"homer: {msg}")
+
+
+def private_dirs():
+    """Only you can open homer's cache and config folders (S3), so what's inside needs no mode of its own.
+    chmod as well, since mkdir leaves a folder that already exists as it was."""
+    for d in PRIVATE:
+        d.mkdir(mode=0o700, parents=True, exist_ok=True)
+        d.chmod(0o700)
 
 
 # --- config & secrets -------------------------------------------------------

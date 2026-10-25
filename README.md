@@ -340,7 +340,7 @@ Nothing waits on the server. Archive, delete, move and mark take effect on scree
 | `/` | search; `Tab` in the search bar switches between this folder and all folders | |
 | `f` | folders and accounts | |
 | `s` / `o` | | save attachments / open a link |
-| `v` | open the mail in your browser, images included | same |
+| `v` | open the mail in your browser, with its embedded images | same |
 | `?` | every key for the window you're in | same |
 | `q` | quit | back to the list |
 
@@ -352,7 +352,7 @@ Every account has the same four folders: Mailbox (your inbox and your sent mail 
 
 `R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/tui.toml`.
 
-Newsletters often carry a plain-text copy full of tracking links and image placeholders. The TUI leaves those out, counts the links (`o` picks one) and lists only real attachments. A mail with images or heavy formatting says so above its text, and `v` shows it in your browser the way it was sent.
+Newsletters often carry a plain-text copy full of tracking links and image placeholders. The TUI leaves those out, counts the links (`o` picks one) and lists only real attachments. A mail with images or heavy formatting says so above its text, and `v` shows it in your browser with its formatting and embedded images. Homer blocks remote images, tracking pixels and scripts, so the sender can't tell that you opened it.
 
 ### Writing mail
 
@@ -403,6 +403,7 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
 - `secret-tool not found` means libsecret isn't installed (see Requirements).
+- `CERTIFICATE_VERIFY_FAILED` means your system doesn't trust the mail server's certificate, or the certificate is for a different name. Homer checks it so that nobody between you and the server can read your password. If you run your own server with a self-signed certificate, point `SSL_CERT_FILE` at that certificate: `SSL_CERT_FILE=~/server.pem homer list -a home`. Homer then trusts only the certificates in that file, so add your system's bundle to it if you set it for Gmail too.
 - `lost the background helper during the command` means the background process stopped while it was running your command. The command may have gone through, so check Sent or Drafts before you run a send again. `HOMER_DAEMON=0` turns the process off while you look into it.
 
 If you're stuck or something's broken, [open an issue](https://github.com/rirzoo/homer/issues) with the command you ran and the full error, minus your email address and any tokens. Feature requests (macOS keychain support, say) and pull requests are welcome too.
@@ -411,7 +412,7 @@ If you're stuck or something's broken, [open an issue](https://github.com/rirzoo
 
 Homer runs on your computer, and there's no Homer server. It connects only to the mail services in your config. For Gmail, those are Google's IMAP and SMTP servers, plus Google's sign-in and the Gmail API once you set up filters. For Microsoft 365, they're Microsoft's sign-in and its mail APIs. Homer collects no analytics and sends nothing to the Homer project or anyone else.
 
-App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. You can delete that folder at any time. Between commands, a background process holds your open mail connections and sign-in tokens in memory until 10 minutes after your last command. Only your user can reach it, through a socket in your private runtime folder.
+App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. Only your user can open that folder or `~/.config/homer`. Each time the TUI starts, it deletes opened messages more than a day old. You can delete that folder at any time. Between commands, a background process holds your open mail connections and sign-in tokens in memory until 10 minutes after your last command. Only your user can reach it, through a socket in your private runtime folder.
 
 Once you allow filter access, Homer reads and changes your Gmail filters and reads your label names, and it does this only when you run a command that needs them. Homer's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
 
@@ -427,7 +428,7 @@ Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gm
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
 
-The Fedora package is built from `homer.spec`. Copr runs `.copr/Makefile` to make the source RPM. It packs the current commit and downloads Textual and its dependencies as wheels, because the versions in Fedora are too old for the TUI. The RPM puts all of it in `/usr/share/homer`, so it never touches your system Python packages. To build it yourself:
+The Fedora package is built from `homer.spec`. Copr runs `.copr/Makefile` to make the source RPM. It packs the current commit and downloads Textual and its dependencies as wheels, because the versions in Fedora are too old for the TUI. `.copr/requirements.txt` pins each wheel by version and SHA-256 hash, so the build fails if a file on PyPI changes. When you bump Textual, regenerate that file with the command at its top. The RPM puts all of it in `/usr/share/homer`, so it never touches your system Python packages. To build it yourself:
 
 ```sh
 make -f .copr/Makefile srpm outdir=/tmp/homer-srpm
