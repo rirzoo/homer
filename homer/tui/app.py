@@ -95,6 +95,7 @@ class Homer(App):
 
     def __init__(self, cfg, name):
         super().__init__()
+        self.scroll_sensitivity_y = 1.0  # a line per wheel step; Textual's 2 races through a mail
         maps, self.state = store.load_maps(), store.load_state()
         names = self.state.get("names", {})
         self.accounts = {n: store.Account(n, a, BACKENDS[a.get("provider", "gmail")], maps, names.get(n))

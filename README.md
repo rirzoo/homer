@@ -328,7 +328,8 @@ Nothing waits on the server. Archive, delete, move and mark take effect on scree
 | Key | In the list | In a conversation (`Enter`) |
 |---|---|---|
 | `j` `k`, arrows, `g` `G` | move | scroll (`space` and `b` page too) |
-| `space` / `b` | scroll the preview | |
+| `space` / `b` | scroll the preview half a page | |
+| `J` / `K` | scroll the preview a line | |
 | `Enter` | open the conversation full width | expand or collapse the mail at the cursor |
 | `n` / `p` | | next / previous mail |
 | `c` | write a new mail | |

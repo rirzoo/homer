@@ -32,7 +32,8 @@ OUT_MARK = {"wait": ("↑", "bold cyan"), "sending": ("↑", "bold cyan"), "sent
 
 HELP = {
     "list": """\
-Move      j k  ↑ ↓   g G top/bottom   space b scroll the preview
+Move      j k  ↑ ↓   g G top/bottom
+Preview   space b half a page   J K a line
 Open      Enter full view   v open in the browser, images and all
 Write     c new   r reply   R reply all   F forward
 Handle    e archive   d delete   m read/unread   M move   u undo

@@ -41,6 +41,8 @@ class MainScreen(Screen):
         Binding("u", "undo", "undo", show=False),
         Binding("space", "scroll(1)", "scroll", show=False),
         Binding("b", "scroll(-1)", show=False),
+        Binding("J", "scroll_line(1)", show=False),
+        Binding("K", "scroll_line(-1)", show=False),
         Binding("slash", "search", "search"),
         Binding("f", "folders", "folders"),
         Binding("T", "single", show=False),
@@ -542,8 +544,12 @@ class MainScreen(Screen):
         self.action_sync()
 
     def action_scroll(self, direction):
+        """Half a screen at a time and no animation, so the line you were reading stays in view."""
         view = self.query_one("#preview", ConvView)
-        view.scroll_page_down() if direction > 0 else view.scroll_page_up()
+        view.scroll_relative(y=direction * max(1, view.size.height // 2), animate=False)
+
+    def action_scroll_line(self, direction):
+        self.query_one("#preview", ConvView).scroll_relative(y=direction, animate=False)
 
     def action_browser(self):
         c = self.current()
@@ -554,7 +560,7 @@ class MainScreen(Screen):
         open_in_browser(msg)
         self.say("Opened in the browser")
 
-    LIST_ONLY = {"compose", "reply", "move", "toggle_read", "pick_move", "select", "undo", "scroll", "search",
+    LIST_ONLY = {"compose", "reply", "move", "toggle_read", "pick_move", "select", "undo", "scroll", "scroll_line", "search",
                  "folders", "single", "more", "sync", "clear", "browser"}
 
     def check_action(self, action, parameters):

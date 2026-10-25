@@ -59,7 +59,7 @@ class ReaderScreen(Screen):
 
     def action_page(self, d):
         view = self.query_one("#reader")
-        view.scroll_page_down() if d > 0 else view.scroll_page_up()
+        view.scroll_page_down(animate=False) if d > 0 else view.scroll_page_up(animate=False)
 
     def action_top(self):
         self.query_one("#reader").scroll_home(animate=False)
