@@ -25,16 +25,16 @@ class MovePicker(Box):
     BINDINGS = [Binding("escape", "dismiss(None)", "cancel"), Binding("down", "move(1)", show=False),
                 Binding("up", "move(-1)", show=False)]
 
-    def __init__(self, title, choices):
+    def __init__(self, title, choices, hint="Enter choose  Esc cancel"):
         super().__init__()
-        self.title_text, self.choices = title, choices
+        self.title_text, self.choices, self.hint = title, choices, hint
 
     def compose(self):
         with Vertical(classes="box"):
             yield Static(Text(self.title_text, "bold"))
             yield Input(placeholder="type to filter", id="filter")
             yield OptionList(*self.choices, id="choices")
-            yield Static(Text("Enter choose  Esc cancel", "dim"))
+            yield Static(Text(self.hint, "dim"))
 
     def on_mount(self):
         self.query_one("#choices", OptionList).highlighted = 0 if self.choices else None
@@ -59,6 +59,22 @@ class MovePicker(Box):
     @on(OptionList.OptionSelected)
     def chosen(self, event):
         self.dismiss(str(event.option.prompt))
+
+
+class TemplatePicker(MovePicker):
+    """Pick a template to use; the last row starts a new one and ctrl+e opens the highlighted one to edit (typing
+    filters, so plain letters can't be keys here). Dismisses with the name, NEW, or ("edit", name)."""
+    NEW = "+ new template"
+    BINDINGS = [Binding("ctrl+e", "edit", "edit", priority=True)]  # over the filter's end-of-line
+
+    def __init__(self, names):
+        super().__init__("Template", [*names, self.NEW], "Enter use  ctrl+e edit  Esc cancel")
+
+    def action_edit(self):
+        lst = self.query_one("#choices", OptionList)
+        name = str(lst.get_option_at_index(lst.highlighted).prompt) if lst.highlighted is not None else self.NEW
+        if name != self.NEW:
+            self.dismiss(("edit", name))
 
 
 class AttachPicker(Box):

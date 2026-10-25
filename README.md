@@ -357,7 +357,22 @@ Newsletters often carry a plain-text copy full of tracking links and image place
 
 ### Writing mail
 
-`c`, `r`, `R` and `F` open a form. You type the recipients (with suggestions from people you've mailed) and the subject in Homer, and the body in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`), which `b` or `Enter` in the Subject field opens. Inside the form `Esc` switches from typing to single-key commands: `s` send, `a` attach, `d` save a draft, `q` close (keeps a draft), `D` discard. `ctrl+s` sends from anywhere.
+`c`, `r`, `R` and `F` open a form. You type the recipients (with suggestions from people you've mailed) and the subject in Homer, and the body in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`), which `b` or `Enter` in the Subject field opens. Inside the form `Esc` switches from typing to single-key commands: `s` send, `t` template, `a` attach, `d` save a draft, `q` close (keeps a draft), `D` discard. `ctrl+s` sends from anywhere.
+
+`t` in the form picks a template: a text file in `~/.config/homer/templates/` with your greeting, any fixed opening and your sign-off. `{body}` marks where your own text goes, and your editor opens on that line. `{first}` turns into the first recipient's first name when the mail is sent or saved. Text you've already written goes where `{body}` is, or under the template if it has no `{body}`. For example, `~/.config/homer/templates/formal.txt`:
+
+```
+Dear {first},
+
+{body}
+
+Best regards,
+Romir
+```
+
+You can also make and change templates without leaving Homer. The last row of the `t` list, "+ new template", asks for a name and opens your editor on a starter with `{first}`, `{body}` and a sign-off. `ctrl+e` on a template in the list opens it in your editor.
+
+An account can fill a template in on its own: `template = "formal"` in its section of `accounts.toml` for new mail, and `reply_template = "short"` for replies and forwards.
 
 Every mail from the TUI goes out as HTML with a plain-text copy and ends with "Sent with homer", linking to this repository. The footer is shown in the form and can't be removed there; `homer send` from the command line doesn't add it.
 

@@ -56,7 +56,7 @@ Fields    Tab Shift+Tab or ↓ ↑ move between fields; type to fill in
           ↓ ↑ and Tab or Enter pick an address suggestion
           Enter in Subject opens your editor for the body
 Commands  Esc leaves the fields, then:
-          s send   b edit body   a attach   X remove attachment
+          s send   b edit body   t template (+ new, ctrl+e edit)   a attach   X remove attachment
           d save draft   q close (keeps a draft)   D discard
 Anywhere  ctrl+s send""",
     "folders": """\

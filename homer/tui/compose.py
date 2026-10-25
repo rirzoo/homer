@@ -21,7 +21,10 @@ from ..common import attachments, body_text
 from . import base
 from .base import ADDR, HELP, addresses, bad_addresses, err, human
 from .widgets import Header, Status
-from .modals import HelpScreen, MovePicker, PathModal
+from .modals import HelpScreen, MovePicker, NameModal, PathModal, TemplatePicker
+
+
+STARTER = "Dear {first},\n\n{body}\n\nBest regards,\n"  # a new template, before you make it yours
 
 
 class FromField(Static, can_focus=True):
@@ -39,13 +42,14 @@ class ComposeScreen(Screen):
         Binding("shift+tab", "field(-1)", show=False),
         Binding("down", "arrow(1)", show=False), Binding("up", "arrow(-1)", show=False),
         Binding("escape", "commands", "commands"),
-        Binding("s", "send_key", "send"), Binding("b", "body", "edit body"), Binding("a", "attach", "attach"),
+        Binding("s", "send_key", "send"), Binding("b", "body", "edit body"), Binding("t", "template", "template"),
+        Binding("a", "attach", "attach"),
         Binding("X", "unattach", "remove attachment"), Binding("d", "close('draft')", "save draft"),
         Binding("q", "close('close')", "close"), Binding("D", "close('discard')", "discard"),
         Binding("question_mark", "help", show=False),
     ]
     FIELDS = ("to", "cc", "bcc", "subject")
-    COMMANDS = {"send_key", "body", "attach", "unattach", "close"}  # single keys: only outside the fields
+    COMMANDS = {"send_key", "body", "template", "attach", "unattach", "close"}  # single keys: only outside the fields
 
     def __init__(self, st):
         super().__init__()
@@ -75,7 +79,7 @@ class ComposeScreen(Screen):
     def on_mount(self):
         self.query_one("#from").can_focus = self.st["kind"] == "new"
         self.paint()
-        if self.st["kind"] in ("reply", "all") and not self.st["text"]:
+        if self.st["kind"] in ("reply", "all") and self.st.pop("fresh", False):
             self.call_after_refresh(self.action_body)  # recipients are known, so straight to writing (W9)
         else:
             self.query_one("#to").focus()
@@ -153,8 +157,8 @@ class ComposeScreen(Screen):
         self.hide_suggest()
         self.set_focus(None)
         self.refresh_bindings()
-        self.query_one(Status).say("s send  b edit body  a attach  X remove attachment  d save draft  q close  D discard"
-                                   "  ·  Tab back to the fields")
+        self.query_one(Status).say("s send  b edit body  t template  a attach  X remove attachment  d save draft  "
+                                   "q close  D discard  ·  Tab back to the fields")
 
     def action_field(self, d):
         sug = self.query_one("#suggest", OptionList)
@@ -216,16 +220,53 @@ class ComposeScreen(Screen):
 
     # --- body and attachments ------------------------------------------------------------------------
 
+    def edit(self, path, line=None):
+        """Your editor on a file, at a line when the editor takes +N."""
+        editor = shlex.split(os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi")
+        if line and Path(editor[0]).name in ("vi", "vim", "nvim", "nano", "emacs", "micro"):
+            editor.append(f"+{line}")
+        with self.app.suspend():
+            subprocess.run([*editor, str(path)])
+
     def action_body(self):
         path = self.st["path"]
         path.write_text(self.st["text"])
-        editor = os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi"
-        with self.app.suspend():
-            subprocess.run([*shlex.split(editor), str(path)])
+        self.edit(path, self.st.pop("cursor", None))  # at a template's {body}, if one was just put in
         self.st["text"] = path.read_text()
         self.st["saved"] = f"text kept {datetime.now():%H:%M}"
         self.paint()
         self.action_commands()
+
+    def action_template(self):
+        """Wrap what you've written in a template from ~/.config/homer/templates and open the editor; or write a
+        new template, or change one, in the editor."""
+        def picked(pick):
+            if pick == TemplatePicker.NEW:
+                self.app.push_screen(NameModal("New template", "Saved in " + str(store.TEMPLATES), taken), start)
+            elif isinstance(pick, tuple):
+                self.edit(store.TEMPLATES / f"{pick[1]}.txt")
+                self.action_template()  # back to the list, to use it or pick another
+            elif pick:
+                use(pick)
+
+        def taken(name):
+            if not name or "/" in name or name.startswith("."):
+                return "A name like formal or short"
+            return f"{name} exists; ctrl+e in the list edits it" if name in store.templates() else None
+
+        def start(name):
+            if name:
+                path = store.TEMPLATES / f"{name}.txt"
+                store.TEMPLATES.mkdir(parents=True, exist_ok=True)
+                path.write_text(STARTER)
+                self.edit(path, STARTER.count("\n", 0, STARTER.index("{body}")) + 1)
+                use(name)
+
+        def use(name):
+            self.st["text"], self.st["cursor"] = store.apply_template(store.template(name), self.st["text"])
+            self.paint()
+            self.action_body()
+        self.app.push_screen(TemplatePicker(store.templates()), picked)
 
     def action_attach(self):
         def add(path):
@@ -255,7 +296,8 @@ class ComposeScreen(Screen):
         orig = st["orig"]
         kind = st["kind"]
         return store.build_outgoing(st["acct"].acct, kind, orig, addresses(st["to"]), addresses(st["cc"]),
-                                    addresses(st["bcc"]), st["subject"].strip(), st["text"], st["attach"],
+                                    addresses(st["bcc"]), st["subject"].strip(),
+                                    st["text"].replace("{first}", store.first_name(st["to"])), st["attach"],
                                     st["headers"])
 
     def problem(self):

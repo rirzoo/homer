@@ -805,7 +805,12 @@ class MainScreen(Screen):
 
     def new_state(self, acct, kind, **kw):
         st = {"acct": acct, "kind": kind, "orig": None, "to": "", "cc": "", "bcc": "", "subject": "", "attach": [],
-              "text": "", "conv": None, "draft": None, "headers": {}, "path": base.DRAFTS / f"{uuid.uuid4().hex}.txt"}
+              "text": "", "conv": None, "draft": None, "headers": {}, "path": base.DRAFTS / f"{uuid.uuid4().hex}.txt",
+              "fresh": True}
+        name = acct.acct.get("template" if kind == "new" else "reply_template")
+        tpl = store.template(name) if name else ""
+        if tpl and "text" not in kw:  # the account's default template; a reopened draft keeps its own text
+            st["text"], st["cursor"] = store.apply_template(tpl, "")
         st.update(kw)
         return st
 

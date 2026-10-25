@@ -547,4 +547,54 @@ else:
                 assert opts["background_image"] == "none" and opts["transparent_background_colors"] == ""
 
         asyncio.run(drive4())
+
+        # templates: the account's default fills a new mail, t wraps what's written, {first} is the recipient's name
+        assert store.apply_template("Hi {first},\n\n{body}\n\nRomir\n", "text\n") == ("Hi {first},\n\ntext\n\nRomir\n", 3)
+        assert store.apply_template("Cheers,\nR\n", "hi") == ("Cheers,\nR\n\nhi", 4)  # no {body}: text goes after
+        assert [store.first_name(t) for t in ("Kavitha Das <k@x.com>", '"Das, Kavitha" <k@x.com>', "rahul.v@x.com",
+                                              "")] == ["Kavitha", "Kavitha", "Rahul", "there"]
+        store.TEMPLATES = Path(tmp) / "templates"
+        store.TEMPLATES.mkdir()
+        (store.TEMPLATES / "formal.txt").write_text("Dear {first},\n\n{body}\n\nBest regards,\nArjun\n")
+        (store.TEMPLATES / "short.txt").write_text("{body}\n\nA.\n")
+
+        async def drive5():
+            tui.app.BACKENDS = {"gmail": fake}
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com", "template": "formal"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                await pilot.press("c")
+                await pilot.pause(0.3)
+                compose = app.screen
+                assert compose.st["text"].startswith("Dear {first},") and compose.st["cursor"] == 3
+                compose.action_body = lambda: None  # stands in for $EDITOR
+                await pilot.press(*"Kavitha Das <k@x.com>")
+                compose.st["text"] = "See you Friday."
+                await pilot.press("escape", "t")
+                await pilot.pause(0.3)
+                await pilot.press(*"short", "enter")
+                await pilot.pause(0.3)
+                assert compose.st["text"] == "See you Friday.\n\nA.\n" and compose.st["cursor"] == 1
+                compose.st["text"] = "Dear {first},\n\nSee you Friday.\n"
+                assert compose.build().get_body(("plain",)).get_content().startswith("Dear Kavitha,")
+
+                edits = []  # the editor, which turns the starter's sign-off into this person's
+
+                def editor(path, line=None):
+                    edits.append((path.name, line))
+                    path.write_text(path.read_text().replace("Best regards,", "Thanks,\nArjun"))
+                compose.edit = editor
+                compose.st["text"] = "Got it."
+                await pilot.press("escape", "t", *"new", "enter")  # + new template, the last row
+                await pilot.pause(0.3)
+                await pilot.press(*"thanks", "enter")
+                await pilot.pause(0.3)
+                assert edits == [("thanks.txt", 3)] and (store.TEMPLATES / "thanks.txt").exists()
+                assert compose.st["text"] == "Dear {first},\n\nGot it.\n\nThanks,\nArjun\n"
+                await pilot.press("escape", "t", "ctrl+e")  # edit the highlighted one, formal; then the list comes back
+                await pilot.pause(0.3)
+                assert edits[-1] == ("formal.txt", None) and isinstance(app.screen, tui.modals.TemplatePicker)
+                await pilot.press("escape")
+
+        asyncio.run(drive5())
         print("tui ok")

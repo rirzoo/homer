@@ -5,7 +5,7 @@ import re
 import tomllib
 from collections import Counter
 from datetime import datetime, timezone
-from email.utils import formataddr
+from email.utils import formataddr, getaddresses
 from html import escape
 from pathlib import Path
 
@@ -16,6 +16,7 @@ FOOTER_TEXT = f"Sent with homer ({HOMER_URL})"
 FOOTER_HTML = f'<p>Sent with <a href="{HOMER_URL}">homer</a></p>'
 FOLDERS_FILE = CONFIG.parent / "folders.toml"
 STATE_FILE = CONFIG.parent / "tui.toml"  # choices made inside the TUI: the theme and account names
+TEMPLATES = CONFIG.parent / "templates"  # <name>.txt: a greeting, boilerplate, a sign-off, with {body} and {first}
 CACHE = Path("~/.cache/homer/tui").expanduser()
 BASE = ("Mailbox", "Drafts", "Archive", "Trash")
 EDITABLE = ("Mailbox", "Archive")  # Drafts and Trash are found by homer (D4, W2)
@@ -117,6 +118,34 @@ def save_state(state):
             lines += ["", f"[{table}]"] + [f"{q(k)} = {q(v)}" for k, v in state[table].items()]
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text("\n".join(lines) + "\n")
+
+
+def templates():
+    return sorted(p.stem for p in TEMPLATES.glob("*.txt"))
+
+
+def template(name):
+    try:
+        return (TEMPLATES / f"{name}.txt").read_text()
+    except OSError:
+        return ""
+
+
+def apply_template(tpl, text):
+    """Your text where the template says {body} (after it, if it doesn't say), and the line that lands on, so the
+    editor can open there."""
+    head, mark, tail = tpl.partition("{body}")
+    if not mark:
+        head, tail = tpl.rstrip("\n") + "\n\n", ""
+    return head + text.strip("\n") + tail, head.count("\n") + 1
+
+
+def first_name(to):
+    """{first}: the first recipient's first name, else the start of their address, else "there"."""
+    name, addr = (getaddresses([to]) or [("", "")])[0]
+    if name.split():
+        return (name.split(",")[-1].split() or name.split())[0].strip(",")  # "Das, Kavitha" is surname first
+    return addr.split("@")[0].split(".")[0].capitalize() or "there"
 
 
 def when_dt(when):
