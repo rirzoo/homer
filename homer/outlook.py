@@ -1,6 +1,7 @@
 """Microsoft 365 / Outlook (e.g. institute mail) via Microsoft Graph, OAuth2 device-code login."""
 import base64
 import copy
+import hashlib
 import http.client
 import json
 import sys
@@ -125,15 +126,39 @@ def _folder_id(name, acct, folder):
     return _folder_ids[name, folder]
 
 
-# Graph message ids are ~150 chars, so `list` numbers rows 1..n and remembers the ids.
-# ponytail: one cache per account, last `list` wins; pass the full id to reach older ones.
-def _resolve(name, ref):
-    if not ref.isdigit():
-        return ref
+# Graph message ids are ~150 chars, so `list` shows an 8-character hash of each and remembers the ids, the newest
+# KEEP_IDS of them per account. A hash stays the same for the same mail, unlike a row number; a moved mail gets a new id.
+KEEP_IDS = 2000
+
+
+def _short(mid):
+    return hashlib.sha1(mid.encode()).hexdigest()[:8]
+
+
+def _known(name):
     try:
-        return json.loads((ID_CACHE / f"{name}.json").read_text())[int(ref) - 1]
-    except (FileNotFoundError, IndexError):
-        die(f"no message #{ref} in the last listing; run: homer list -a {name}")
+        ids = json.loads((ID_CACHE / f"{name}.json").read_text())
+    except FileNotFoundError:
+        return {}
+    return ids if isinstance(ids, dict) else {}  # older Homer kept a list of row numbers
+
+
+def _remember(name, mids):
+    ids = _known(name)
+    for mid in mids:
+        ids.pop(_short(mid), None)
+        ids[_short(mid)] = mid  # newest last, so the trim drops the oldest
+    ID_CACHE.mkdir(parents=True, exist_ok=True)
+    (ID_CACHE / f"{name}.json").write_text(json.dumps(dict(list(ids.items())[-KEEP_IDS:])))
+
+
+def _resolve(name, ref):
+    ids = _known(name)
+    if ref in ids:
+        return ids[ref]
+    if len(ref) <= 16:
+        die(f"no message {ref} in recent listings; run: homer list -a {name}")
+    return ref
 
 
 def _msg_path(name, ref):
@@ -155,7 +180,7 @@ def folders(name, acct):
 
 
 def list_messages(name, acct, folder, n, unread, search, ids=False):
-    """ids=True returns full Graph ids as refs and leaves the row-number cache alone (for the TUI)."""
+    """ids=True returns full Graph ids as refs and leaves the id cache alone (for the TUI)."""
     q = {"$top": n, "$select": "id,subject,from,receivedDateTime,isRead"}
     if search:
         q["$search"] = f'"{search}"'  # KQL, e.g. from:prof subject:exam; Graph forbids $orderby/$filter with it
@@ -168,12 +193,11 @@ def list_messages(name, acct, folder, n, unread, search, ids=False):
     if search and unread:
         msgs = [m for m in msgs if not m["isRead"]]
     if not ids:
-        ID_CACHE.mkdir(parents=True, exist_ok=True)
-        (ID_CACHE / f"{name}.json").write_text(json.dumps([m["id"] for m in msgs]))
+        _remember(name, [m["id"] for m in msgs])
     rows = []
-    for i, m in enumerate(msgs, 1):
+    for m in msgs:
         addr = (m.get("from") or {}).get("emailAddress", {})
-        rows.append((m["id"] if ids else str(i), not m["isRead"], datetime.fromisoformat(m["receivedDateTime"]),
+        rows.append((m["id"] if ids else _short(m["id"]), not m["isRead"], datetime.fromisoformat(m["receivedDateTime"]),
                      addr.get("name") or addr.get("address") or "", m.get("subject") or ""))
     return rows
 
@@ -192,6 +216,17 @@ def save_draft(name, acct, msg):
 
 def mkdir(name, acct, folder):
     _graph(name, acct, "/me/mailFolders", {"displayName": folder})  # ponytail: top-level only
+
+
+def rmdir(name, acct, folder):
+    """Moves the folder, mail and all, into Deleted Items, as Outlook does (Graph's DELETE skips straight past it).
+    Returns a note on where it went."""
+    fid = _folder_id(name, acct, folder)
+    if fid in WELL_KNOWN:
+        die(f"{folder!r} is one of Outlook's own folders and can't be deleted")
+    _graph(name, acct, f"/me/mailFolders/{urllib.parse.quote(fid)}/move", {"destinationId": "deleteditems"})
+    _folder_ids.pop((name, folder), None)
+    return "; it's in Deleted Items until you empty that"
 
 
 def move(name, acct, folder, refs, dest):

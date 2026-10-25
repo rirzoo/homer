@@ -13,7 +13,7 @@ $ homer read -a inst 2 --save ~/Downloads
 $ homer send -a gmail --to prof@uni.edu -s "Assignment 3" -b "Please find it attached." --attach a3.pdf
 ```
 
-You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create folders, move messages, mark them read or unread, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
+You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create and delete folders, move messages, mark them read or unread, sign mail with your OpenPGP key and check signed mail you get, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
@@ -58,6 +58,7 @@ Opening a conversation, writing a reply in `vi` and sending it, switching to the
     - [Option B: ask your IT department](#option-b-ask-your-it-department)
 - [Usage](#usage)
   - [HTML mail](#html-mail)
+  - [Signing mail](#signing-mail)
   - [Rules and filters](#rules-and-filters)
 - [Using Homer from an agent](#using-homer-from-an-agent)
 - [TUI](#tui)
@@ -74,6 +75,7 @@ Opening a conversation, writing a reply in `vi` and sending it, switching to the
 
 - Python 3.11+
 - Linux with `secret-tool` (libsecret): Fedora `sudo dnf install libsecret`, Debian/Ubuntu `sudo apt install libsecret-tools`
+- `gpg` (GnuPG), only for [signing mail](#signing-mail): Fedora `sudo dnf install gnupg2`, Debian/Ubuntu `sudo apt install gnupg`
 
 ## Install
 
@@ -203,10 +205,11 @@ homer login   -a ACCT [--rules]                  link an account (--rules: also 
 homer folders -a ACCT                            list folders
 homer list    [-a ACCT] [-f FOLDER] [-n 20] [--unread] [--search QUERY]
 homer read    ID [-a ACCT] [-f FOLDER] [--save DIR]
-homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html]
-homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html]
-homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NOTE] [--attach FILE ...] [--draft] [--html] [--attached]
+homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html] [--sign|--no-sign]
+homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html] [--sign|--no-sign]
+homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NOTE] [--attach FILE ...] [--draft] [--html] [--attached] [--sign|--no-sign]
 homer mkdir   FOLDER [-a ACCT]
+homer rmdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
 homer mark    read|unread ID... [-a ACCT] [-f FOLDER]
 homer rules   [-a ACCT]                          list rules (Gmail: filters) with their ids
@@ -220,7 +223,7 @@ homer         [-a ACCT]                          open the TUI (same as homer tui
 
 `--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
 
-`homer daemon enable` starts a background service that keeps your mail synced and stays signed in. It runs as a systemd user service (`homer.service`), so it starts when you log in and keeps going after you close the TUI. Every two minutes it fetches the folders of every account, so the TUI opens on current mail instead of syncing first. It also shows a desktop notification for new mail in the folders you choose: Mailbox, unless you pick others with `N` in the TUI's folder pane. Commands run through it too and skip connecting and logging in, which takes a Gmail `list` from about 2 seconds to about 1 and an Outlook one from about 1 second to 0.3. Without the service, commands connect on their own as before. A fresh service takes over every 45 minutes, after `homer login` and when Homer is updated. Only your user can reach it. `homer daemon status` says whether it's running and when it last synced, `homer daemon disable` stops and removes it, and `HOMER_DAEMON=0` keeps a command from using it.
+`homer daemon enable` starts a background service that keeps your mail synced and stays signed in. It runs as a systemd user service (`homer.service`), so it starts when you log in and keeps going after you close the TUI. Every two minutes it fetches the folders of every account, so the TUI opens on current mail instead of syncing first. It also shows a desktop notification for new mail in the folders you choose: Mailbox, unless you pick others with `N` in the TUI's folder pane. Commands run through it too and skip connecting and logging in, which takes a Gmail `list` from about 2 seconds to about 1 and an Outlook one from about 1 second to 0.3. Without the service, commands connect on their own as before. `homer rules` and mail you sign don't go through the service, since a Google sign-in or gpg's passphrase prompt needs your own terminal. A fresh service takes over every 45 minutes, after `homer login` and when Homer is updated. Only your user can reach it. `homer daemon status` says whether it's running and when it last synced, `homer daemon disable` stops and removes it, and `HOMER_DAEMON=0` keeps a command from using it.
 
 `reply` answers the sender of message `ID` (add `--all` to include everyone else on it). It adds "Re:" to the subject, quotes the original under your text, and sets the headers mail apps use to keep the reply in the same conversation. Replying to a message you sent yourself goes to its original recipients, which is handy for a follow-up.
 
@@ -247,13 +250,46 @@ Provider differences:
 
 | | Gmail / IMAP | Outlook / Microsoft 365 |
 |---|---|---|
-| Message `ID` | UID shown by `list` (stable) | `#` from your most recent `list` on that account (or a full Graph message id) |
+| Message `ID` | UID shown by `list` (stable) | 8-character ID shown by `list`, the same every time for the same mail (or a full Graph message id) |
 | `--search` | IMAP SEARCH: `'FROM "bob" SINCE 1-Oct-2026'` | Outlook search (KQL): `'from:bob subject:exam'` |
 | Folder names | as `homer folders` shows them, e.g. `"[Gmail]/Sent Mail"`, `"[Gmail]/Bin"` | display name, or `inbox`, `sentitems`, `drafts`, `deleteditems`, `junkemail`, `archive` |
 | Delete | `move ID --to "[Gmail]/Trash"` (`[Gmail]/Bin` in some regions) | `move ID --to deleteditems` |
+| `rmdir` | removes the label and leaves its mail in All Mail. Other IMAP servers delete the mail with the folder, so Homer refuses while it still holds any | moves the folder and its mail to Deleted Items |
 | Limits | | max 4 MB per message incl. attachments; `mkdir` creates top-level folders |
 
-Outlook numbers are reassigned on every `list`, so run `list` on the folder right before `read`/`move`/`mark`.
+Homer remembers the Outlook IDs of the last 2,000 messages you've listed on each account, so an ID from an earlier `list` keeps working. Moving a message gives it a new ID, so list the folder it went to before you use it again.
+
+### Signing mail
+
+Homer can sign your mail with an OpenPGP key. People whose mail app checks signatures can then see that the mail came from you and wasn't changed on the way. Homer uses `gpg` for this, and your key stays in gpg's keyring.
+
+If you don't have a key yet, make one for the account's address:
+
+```sh
+gpg --quick-gen-key "Your Name <you@gmail.com>"
+```
+
+Then turn signing on for that account in `accounts.toml`:
+
+```toml
+[accounts.gmail]
+email = "you@gmail.com"
+sign = true
+pgp_key = "0123456789ABCDEF"   # optional; without it gpg picks the key for the account's address
+```
+
+After that, `send`, `reply` and `forward` sign everything from the account, and so does the TUI. `--no-sign` skips signing for one mail, and `--sign` signs one mail from an account that doesn't sign by default. If your key has a passphrase, gpg asks for it. A terminal prompt can't draw over the TUI, so before sending from the TUI, unlock the key (sign anything with gpg) or use a desktop pinentry.
+
+Mail apps that check OpenPGP, like Thunderbird, show the signature as valid. Others show a small `signature.asc` attachment.
+
+`homer read` and the TUI check signed mail you receive and show what gpg found:
+
+- `good signature from NAME <ADDR>`: the mail is unchanged since it was signed, by a key you trust.
+- `good signature ..., key not verified`: the signature matches the key, but you haven't confirmed that the key belongs to that person. Anyone can put any name and address on a key, so check the fingerprint with them, then mark it with `gpg --lsign-key ADDR`.
+- `BAD signature`: the mail was changed after it was signed.
+- `signed with key ..., which isn't in your keyring`: fetch the sender's key with the `gpg --locate-keys` command it shows. Homer never fetches keys by itself, because asking a key server for one tells it whose mail you're reading.
+
+Homer checks PGP/MIME signatures, which Thunderbird and most other apps send. It doesn't check the older inline kind that starts with `-----BEGIN PGP SIGNED MESSAGE-----`.
 
 ### Rules and filters
 
@@ -309,8 +345,8 @@ Use `homer` for all mail. `homer --help` and `homer <command> --help` list the o
 - Accounts: `gmail` (the default, personal mail) and `inst` (institute mail). Pick one with `-a`.
 - Pass the body on stdin with a quoted heredoc (`<<'EOF'`) so quotes and `$` survive.
 - Answer a mail with `homer reply ID`, not `send`, so it stays in the same thread.
-- On Outlook accounts, IDs change with every `list`. Run `list` right before `read`, `move` or `mark`.
-- Ask me before adding, changing or removing a rule with `homer rules`.
+- On Outlook accounts, a moved mail gets a new ID. List its new folder before you `read`, `move` or `mark` it again.
+- Ask me before adding, changing or removing a rule with `homer rules`, and before deleting a folder with `homer rmdir`.
 - Before sending, show me the recipient, subject and body and wait for my OK. If unsure, use `--draft`.
 ```
 
@@ -349,7 +385,7 @@ Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `
 
 ### Folders
 
-Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. In that list `Space` or `Enter` ticks a folder and `s` saves. If you untick everything, Mailbox and Archive go back to their defaults, and a folder of your own stays but shows nothing. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. If Archive or one of your own folders is fed by more than one server folder, `e` and `M` ask which one the mail goes into, and the one you picked last is at the top. `Esc` leaves the mail where it is. Moves to Mailbox always go to your inbox. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
+Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. In that list `Space` or `Enter` ticks a folder and `s` saves. If you untick everything, Mailbox and Archive go back to their defaults, and a folder of your own stays but shows nothing. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. If Archive or one of your own folders is fed by more than one server folder, `e` and `M` ask which one the mail goes into, and the one you picked last is at the top. `Esc` leaves the mail where it is. Moves to Mailbox always go to your inbox. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` and `homer rmdir` for that.
 
 `R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/tui.toml`.
 
@@ -396,13 +432,14 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 
 - mouse support
 - bold, lists and other formatting in the body (the body is plain text with links)
+- setting up signing: pick or make a key, and choose whether an account signs by default
 
 ## Help & troubleshooting
 
 - `homer --help` and `homer <command> --help` show all options.
 - An `AADSTS...` error or "Need admin approval" at sign-in means your organisation hasn't approved the app. See Option B.
 - `rules need the MailboxSettings.ReadWrite permission`: see [Setting up rules on Microsoft 365](#setting-up-rules-on-microsoft-365).
-- `invalid_grant` from `homer rules` on Gmail, about a week after setup, means the Google app is in *Testing*, where sign-ins last 7 days. Run `homer login -a gmail --rules` again, or publish the app (step 2 of [Setting up rules on Gmail](#setting-up-rules-on-gmail)).
+- About a week after you set up Gmail filters, `homer rules` may say that Google ended Homer's access, and open the sign-in page. Google does that every 7 days while the app is in *Testing*. Sign in again and the command carries on; if nobody signs in within 5 minutes, it gives up. To stop the weekly sign-in, publish the app (step 2 of [Setting up rules on Gmail](#setting-up-rules-on-gmail)).
 - `graph 403` means the token doesn't have mail permissions. Check the app's API permissions or set `scope` as shown above, then run `homer login` again.
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
@@ -428,9 +465,9 @@ To remove what Homer keeps, run `secret-tool clear service homer` for the passwo
 python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/daemon.py` (the background service that syncs mail for the TUI, sends notifications and keeps connections open for commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, OpenPGP signing, search syntax), `homer/daemon.py` (the background service that syncs mail for the TUI, sends notifications and keeps connections open for commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
 
-Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
+Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without touching the ID cache that `list` keeps for agents.
 
 The Fedora package is built from `homer.spec`. Copr runs `.copr/Makefile` to make the source RPM. It packs the current commit and downloads Textual and its dependencies as wheels, because the versions in Fedora are too old for the TUI. `.copr/requirements.txt` pins each wheel by version and SHA-256 hash, so the build fails if a file on PyPI changes. When you bump Textual, regenerate that file with the command at its top. The RPM puts all of it in `/usr/share/homer`, so it never touches your system Python packages. To build it yourself:
 

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import daemon, gmail, outlook
 from .common import (attachments, body_text, build_forward, build_message, build_reply, die, get_account, load_config,
-                     private_dirs, save_attachments)
+                     private_dirs, save_attachments, sign, signature)
 
 BACKENDS = {"gmail": gmail, "outlook": outlook}
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \t and \n: escape sequences, \r, bells
@@ -56,15 +56,19 @@ def cmd_list(a, cfg):
     name, acct, backend = account(cfg, a)
     for ref, unread, when, who, subject in backend.list_messages(name, acct, a.folder, a.n, a.unread, a.search):
         date = when.astimezone().strftime("%Y-%m-%d %H:%M") if when else ""
-        print(plain(f"{ref:>7} {'*' if unread else ' '} {date:16}  {plain(who)[:28]:28}  {subject}"))
+        print(plain(f"{ref:>8} {'*' if unread else ' '} {date:16}  {plain(who)[:28]:28}  {subject}"))
 
 
 def cmd_read(a, cfg):
     name, acct, backend = account(cfg, a)
-    msg = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
+    raw = backend.fetch_raw(name, acct, a.folder, a.id)
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
     for h in ("From", "To", "Cc", "Date", "Subject"):
         if msg[h]:
             print(plain(f"{h}: {msg[h]}"))
+    sig = signature(raw, msg)
+    if sig:
+        print(plain(f"Signature: {sig}"))
     print()
     print(plain(body_text(msg)))
     parts = attachments(msg)
@@ -78,6 +82,11 @@ def cmd_read(a, cfg):
             print(f"saved {path}")
 
 
+def signed(a, acct, msg):
+    """--sign / --no-sign, else the account's `sign` setting."""
+    return sign(acct, msg) if (acct.get("sign") if a.sign is None else a.sign) else msg
+
+
 def cmd_send(a, cfg):
     name, acct, backend = account(cfg, a)
     missing = [f for f in a.attach if not Path(f).is_file()]
@@ -86,7 +95,7 @@ def cmd_send(a, cfg):
     if a.body is None and sys.stdin.isatty():
         die("give -b BODY or pipe the body on stdin")
     body = a.body if a.body is not None else sys.stdin.read()
-    msg = build_message(acct, a.to, a.cc, a.bcc, a.subject, body, a.attach, a.html)
+    msg = signed(a, acct, build_message(acct, a.to, a.cc, a.bcc, a.subject, body, a.attach, a.html))
     if a.draft:
         backend.save_draft(name, acct, msg)
         print(f"draft saved in {acct['email']} Drafts (not sent)")
@@ -104,7 +113,7 @@ def cmd_reply(a, cfg):
         die("give -b BODY or pipe the body on stdin")
     body = a.body if a.body is not None else sys.stdin.read()
     orig = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
-    msg = build_reply(acct, orig, body, a.all, a.attach, a.html)
+    msg = signed(a, acct, build_reply(acct, orig, body, a.all, a.attach, a.html))
     rcpts = [ad.addr_spec for h in ("To", "Cc") if msg[h] for ad in msg[h].addresses]
     if a.draft:
         backend.save_draft(name, acct, msg)
@@ -121,7 +130,7 @@ def cmd_forward(a, cfg):
         die(f"attachment not found: {', '.join(missing)}")
     body = a.body if a.body is not None else "" if sys.stdin.isatty() else sys.stdin.read()
     orig = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
-    msg = build_forward(acct, orig, a.to, a.cc, a.bcc, body, a.attach, a.html, a.attached)
+    msg = signed(a, acct, build_forward(acct, orig, a.to, a.cc, a.bcc, body, a.attach, a.html, a.attached))
     if a.draft:
         backend.save_draft(name, acct, msg)
         print(plain(f"forward draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}"))
@@ -166,6 +175,11 @@ def cmd_mkdir(a, cfg):
     name, acct, backend = account(cfg, a)
     backend.mkdir(name, acct, a.folder)
     print(f"created folder {a.folder!r}")
+
+
+def cmd_rmdir(a, cfg):
+    name, acct, backend = account(cfg, a)
+    print(f"deleted folder {a.folder!r}{backend.rmdir(name, acct, a.folder)}")
 
 
 def cmd_move(a, cfg):
@@ -221,7 +235,7 @@ def parser():
     common.add_argument("-a", "--account", help="account name from config (default: config's default)")
     folder = argparse.ArgumentParser(add_help=False)
     folder.add_argument("-f", "--folder", default="INBOX")
-    id_help = "Gmail: UID from `list`; Outlook: # from the last `list`, or a full message id"
+    id_help = "Gmail: UID from `list`; Outlook: the ID from a recent `list`, or a full message id"
 
     ap = argparse.ArgumentParser(prog="homer", description="multi-account mail CLI (Gmail/IMAP, Microsoft 365)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -251,6 +265,8 @@ def parser():
     p.add_argument("-b", "--body", help="body text (default: read stdin)")
     p.add_argument("--attach", action="append", default=[], metavar="FILE")
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.add_argument("--sign", action=argparse.BooleanOptionalAction,
+                   help="sign with your OpenPGP key (default: the account's sign setting)")
     p.add_argument("--html", action="store_true", help="body is HTML (a plain-text copy is added)")
     p.set_defaults(fn=cmd_send)
 
@@ -260,6 +276,8 @@ def parser():
     p.add_argument("--all", action="store_true", help="reply to everyone on the original, not just the sender")
     p.add_argument("--attach", action="append", default=[], metavar="FILE")
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.add_argument("--sign", action=argparse.BooleanOptionalAction,
+                   help="sign with your OpenPGP key (default: the account's sign setting)")
     p.add_argument("--html", action="store_true", help="reply text is HTML (a plain-text copy is added)")
     p.set_defaults(fn=cmd_reply)
 
@@ -271,6 +289,8 @@ def parser():
     p.add_argument("-b", "--body", help="note above the forwarded message (default: stdin if piped, else none)")
     p.add_argument("--attach", action="append", default=[], metavar="FILE")
     p.add_argument("--draft", action="store_true", help="save to Drafts instead of sending")
+    p.add_argument("--sign", action=argparse.BooleanOptionalAction,
+                   help="sign with your OpenPGP key (default: the account's sign setting)")
     p.add_argument("--html", action="store_true", help="note is HTML (a plain-text copy is added)")
     p.add_argument("--attached", action="store_true", help="send the original as an .eml attachment, not inline")
     p.set_defaults(fn=cmd_forward)
@@ -284,6 +304,10 @@ def parser():
     p = sub.add_parser("mkdir", parents=[common], help="create a folder (Gmail: a label)")
     p.add_argument("folder")
     p.set_defaults(fn=cmd_mkdir)
+
+    p = sub.add_parser("rmdir", parents=[common], help="delete a folder (Gmail: the label; Outlook: to Deleted Items)")
+    p.add_argument("folder")
+    p.set_defaults(fn=cmd_rmdir)
 
     p = sub.add_parser("move", parents=[common, folder], help="move messages to another folder")
     p.add_argument("ids", nargs="+", help=id_help)
@@ -330,6 +354,16 @@ def run(a):
         die(e)
 
 
+def signs(a):
+    """A send that signs runs here, not in the helper, so gpg can ask for the key's passphrase on this terminal."""
+    if getattr(a, "sign", False) is not None:  # --sign, --no-sign, or a command that doesn't sign
+        return bool(getattr(a, "sign", False))
+    try:
+        return bool(get_account(load_config(), a.account)[1].get("sign"))
+    except SystemExit:  # a bad config: let the command itself report it
+        return False
+
+
 def main():
     signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `homer read ... | head` exits quietly
     argv = sys.argv[1:]
@@ -337,7 +371,8 @@ def main():
         argv = ["tui", *argv]  # bare `homer` (or `homer -a inst`) opens the TUI
     a = parser().parse_args(argv)  # here, so --help and usage errors never reach the service
     private_dirs()
-    if a.cmd in daemon.COMMANDS and os.environ.get("HOMER_DAEMON") != "0" and "HOMER_CONFIG" not in os.environ:
+    if a.cmd in daemon.COMMANDS and os.environ.get("HOMER_DAEMON") != "0" and "HOMER_CONFIG" not in os.environ \
+            and not signs(a):
         piped = getattr(a, "body", "") is None and not sys.stdin.isatty()  # send/reply/forward read stdin then
         stdin = sys.stdin.read() if piped else None
         reply = daemon.call({"argv": argv, "cwd": os.getcwd(), "stdin": stdin})

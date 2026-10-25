@@ -14,7 +14,7 @@ from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 
 from .. import store
-from ..common import attachments, body_text, part_text
+from ..common import attachments, body_text, part_text, sign, signature
 
 
 DOWNLOADS = Path("~/Downloads").expanduser()
@@ -78,7 +78,9 @@ def err(e):
 
 
 def parse(raw):
-    return email.message_from_bytes(raw, policy=email.policy.default)
+    msg = email.message_from_bytes(raw, policy=email.policy.default)
+    msg.signature = signature(raw, msg)  # gpg runs only for signed mail
+    return msg
 
 
 def fit(s, width):
@@ -223,6 +225,9 @@ def conv_blocks(conv, acct, raws, opened, width, full=False, cursor=None):
             t.append("\n\n  Loading…", "dim")
             blocks.append(t)
             continue
+        sig = getattr(msg, "signature", None)
+        if sig:
+            t.append("\n").append_text(bar).append("Signed: " + sig, STYLE["quote"] if sig.startswith("good") else "bold red")
         ps, ls = attachments(msg), links_of(msg)
         images = sum(inline(p) for p in msg.walk() if not p.is_multipart())
         ps = [p for p in ps if not inline(p)]
@@ -251,6 +256,9 @@ def conv_blocks(conv, acct, raws, opened, width, full=False, cursor=None):
 def send_now(o):
     """Send an outbox entry, then move the draft it came from (if any) to Trash. Raises on failure."""
     acct, msg = o["acct"], o["msg"]
+    if acct.acct.get("sign"):  # signed at send time, so drafts stay editable
+        # ponytail: a terminal pinentry can't draw over the TUI; unlock the key first or use a desktop pinentry
+        msg = sign(acct.acct, msg)
     acct.call("send", msg, [a.addr_spec for h in ("To", "Cc", "Bcc") if msg[h] for a in msg[h].addresses])
     if o["st"]["draft"]:
         try:

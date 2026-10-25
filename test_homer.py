@@ -202,6 +202,27 @@ assert got == [["INBOX"]] * 4 and FakeIMAP.peak == 1 and FakeIMAP.made == 1
 gmail._sessions["t"].m.dead = True  # server dropped the connection
 assert gmail.folders("t", {}) == ["INBOX"] and FakeIMAP.made == 2
 
+
+class FakeFolders(FakeIMAP):  # rmdir: Gmail only drops a label, other servers would delete the mail too
+    count, deleted = b"3", []
+    __enter__ = lambda self: self
+    __exit__ = lambda self, *a: None
+    select = lambda self, folder, readonly=False: ("OK", [self.count])
+    close = lambda self: None
+    delete = lambda self, folder: FakeFolders.deleted.append(folder) or ("OK", [b""])
+
+
+gmail._connect = lambda name, acct: FakeFolders()
+assert "All Mail" in gmail.rmdir("t", {}, "Old") and FakeFolders.deleted == ['"Old"']  # Gmail: no count check
+try:
+    gmail.rmdir("t", {"imap": "imap.example.com"}, "Full")
+    raise AssertionError("deleted a folder that still held mail")
+except SystemExit as e:
+    assert "still holds 3 messages" in str(e) and FakeFolders.deleted == ['"Old"']
+FakeFolders.count = b"0"
+assert gmail.rmdir("t", {"imap": "imap.example.com"}, "Empty") == "" and FakeFolders.deleted[-1] == '"Empty"'
+gmail._connect = lambda name, acct: FakeIMAP()
+
 calls = []
 
 
@@ -232,9 +253,23 @@ with tempfile.TemporaryDirectory() as tmp:
     outlook._graph = lambda *a, **k: json.dumps({"value": [
         {"id": "AAMk1", "isRead": False, "receivedDateTime": "2026-10-11T10:00:00Z", "subject": "s"}]}).encode()
     assert outlook.list_messages("t", {}, "inbox", 5, False, None, ids=True)[0][0] == "AAMk1"
-    assert not any(Path(tmp).iterdir())  # ids=True leaves the agents' row numbers alone
-    assert outlook.list_messages("t", {}, "inbox", 5, False, None)[0][0] == "1"
-    assert json.loads((Path(tmp) / "t.json").read_text()) == ["AAMk1"]
+    assert not any(Path(tmp).iterdir())  # ids=True leaves the agents' ids alone
+    (Path(tmp) / "t.json").write_text('["old-row-numbers"]')  # what older Homer wrote
+    ref = outlook.list_messages("t", {}, "inbox", 5, False, None)[0][0]
+    assert len(ref) == 8 and int(ref, 16) >= 0 and outlook._resolve("t", ref) == "AAMk1"
+    outlook._graph = lambda *a, **k: json.dumps({"value": [
+        {"id": "AAMk2", "isRead": True, "receivedDateTime": "2026-10-12T10:00:00Z", "subject": "t"}]}).encode()
+    outlook.list_messages("t", {}, "sentitems", 5, False, None)
+    assert outlook._resolve("t", ref) == "AAMk1"  # a later list doesn't take the first one's ids away
+    assert outlook._resolve("t", "A" * 40) == "A" * 40  # a full Graph id passes through
+    try:
+        outlook._resolve("t", "3")
+        raise AssertionError("an unknown short id should die")
+    except SystemExit as e:
+        assert "recent listings" in str(e)
+    outlook.KEEP_IDS = 1
+    outlook.list_messages("t", {}, "sentitems", 5, False, None)
+    assert list(json.loads((Path(tmp) / "t.json").read_text()).values()) == ["AAMk2"]  # the oldest go first
 print("backend sessions ok")
 
 # TUI data side: search syntax, conversations, the catch-all Archive, folder map, footer, dates
@@ -354,10 +389,82 @@ assert n == {"criteria": {"from": "a@x.com OR b@x.com", "query": "invoice", "sub
              "action": {"addLabelIds": ["Label_9", "STARRED"], "removeLabelIds": ["INBOX"]}}  # old folder label swapped
 assert gmail._native({**blank, "from": ["z@x.com"], "delete": True}) == {
     "criteria": {"from": "z@x.com"}, "action": {"addLabelIds": ["TRASH"]}}
+
+# a lapsed Google sign-in (7 days, for apps in Testing) signs in again and carries on; one nobody finishes times out
+import http.server  # noqa: E402
+import io  # noqa: E402
+import contextlib  # noqa: E402
+
+gacct = {"email": "me@gmail.com", "client_id": "c", "client_secret": "s"}
+real = gmail.post_form, gmail.secret_get, gmail.http_json, gmail._google_login, gmail.webbrowser.open
+logins = []
+gmail.post_form = lambda url, data: {"error": "invalid_grant"}
+gmail.secret_get = lambda name, kind: "rt"
+gmail.http_json = lambda url, tok, data=None, method=None: {"filter": [], "token": tok}
+gmail._google_login = lambda name, acct: logins.append(name) or gmail._gtokens.update({name: "fresh"})
+gmail._gtokens.clear()
+with contextlib.redirect_stderr(io.StringIO()) as err:
+    assert gmail._api("g", gacct, "/settings/filters")["token"] == "fresh" and logins == ["g"]
+assert "opening the sign-in page" in err.getvalue()
+gmail.post_form, gmail.secret_get, gmail.http_json, gmail._google_login, gmail.webbrowser.open = real
+gmail.webbrowser.open = lambda url: True
+
+
+class QuickServer(http.server.HTTPServer):
+    timeout = property(lambda self: 0.2, lambda self, v: None)  # 5 minutes is long for a test
+
+
+real_server, http.server.HTTPServer = http.server.HTTPServer, QuickServer
+try:
+    with contextlib.redirect_stderr(io.StringIO()):
+        gmail._google_login("g", gacct)
+    raise AssertionError("sign-in without a browser answer should give up")
+except SystemExit as e:
+    assert "no answer from the browser" in str(e)
+finally:
+    http.server.HTTPServer, gmail.webbrowser.open = real_server, real[4]
 print("rules ok")
 
 # S5: the CLI prints mail without terminal control characters, keeping newlines and tabs
 assert cli.plain("a\x1b[31mb\r\x9bc\x07\n\td") == "a[31mbc\n\td"
+# OpenPGP: a signed mail survives being written out for SMTP or IMAP, and any change to it shows up
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+if shutil.which("gpg"):
+    with tempfile.TemporaryDirectory() as tmp:
+        os_env = dict(os.environ)
+        os.environ["GNUPGHOME"] = tmp
+        try:
+            subprocess.run(["gpg", "--batch", "--passphrase", "", "--quick-gen-key", "T <t@example.com>", "ed25519",
+                            "sign", "never"], check=True, capture_output=True)
+            att = Path(tmp) / "notes.pdf"
+            att.write_bytes(b"%PDF fake\xff")
+            acct = {"email": "t@example.com"}
+            plain = homer.build_message(acct, ["x@example.com"], [], [], "Héllo", "wörld, ünïcode\n", [att])
+            signed = homer.sign(acct, plain)
+            for pol in (email.policy.SMTP, email.policy.default):  # smtplib and Graph use CRLF, IMAP APPEND here LF
+                raw = signed.as_bytes(policy=pol)
+                back = email.message_from_bytes(raw, policy=email.policy.default)
+                assert homer.signature(raw).startswith("good signature from T <t@example.com>"), homer.signature(raw)
+                assert homer.body_text(back).strip() == "wörld, ünïcode" and back["Subject"] == "Héllo"
+                assert [p.get_filename() for p in homer.attachments(back)] == ["notes.pdf"]  # no signature.asc
+            raw = signed.as_bytes(policy=email.policy.SMTP)
+            assert homer.signature(raw.replace(b"=C3=B6", b"=C3=A4", 1)).startswith("BAD")
+            assert homer.signature(plain.as_bytes()) is None
+            try:
+                homer.sign({"email": "nobody@example.com"}, plain)
+                raise AssertionError("signed without a key")
+            except SystemExit as e:
+                assert "gpg --quick-gen-key" in str(e)
+        finally:
+            subprocess.run(["gpgconf", "--kill", "gpg-agent"], capture_output=True)
+            os.environ.clear()
+            os.environ.update(os_env)
+    print("signing ok")
+else:
+    print("signing skipped: no gpg")
 
 # the background helper: a command runs as `homer` would, over a real socket, and a code change makes it step aside
 import os  # noqa: E402
