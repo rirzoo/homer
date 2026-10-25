@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import daemon, gmail, outlook
 from .common import (attachments, body_text, build_forward, build_message, build_reply, die, get_account, load_config,
-                     save_attachments)
+                     private_dirs, save_attachments)
 
 BACKENDS = {"gmail": gmail, "outlook": outlook}
 
@@ -299,6 +299,7 @@ def main():
     if not argv or argv[0] in ("-a", "--account") or argv[0].startswith("--account="):
         argv = ["tui", *argv]  # bare `homer` (or `homer -a inst`) opens the TUI
     a = parser().parse_args(argv)  # here, so --help and usage errors never reach the helper
+    private_dirs()
     if a.cmd in daemon.COMMANDS and os.environ.get("HOMER_DAEMON") != "0" and "HOMER_CONFIG" not in os.environ:
         piped = getattr(a, "body", "") is None and not sys.stdin.isatty()  # send/reply/forward read stdin then
         stdin = sys.stdin.read() if piped else None

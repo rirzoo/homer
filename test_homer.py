@@ -41,6 +41,12 @@ with tempfile.TemporaryDirectory() as tmp:
     assert parsed.get_body(("plain",)).get_content().strip() == "Hi\nhomer"
     assert [p.get_filename() for p in homer.attachments(parsed)] == ["report.pdf"]
 
+    # S3: the cache and config folders are closed to other users, including ones made before the fix
+    homer.PRIVATE = (tmp / "cache" / "homer", tmp / "config")
+    homer.PRIVATE[1].mkdir(mode=0o755)
+    homer.private_dirs()
+    assert all(d.stat().st_mode & 0o777 == 0o700 for d in homer.PRIVATE)
+
 assert homer.html_to_text("<style>x{}</style><p>Hi&nbsp;there</p><p>bye</p>") == "Hi there\nbye"
 print("ok")
 
