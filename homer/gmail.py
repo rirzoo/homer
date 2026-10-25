@@ -31,12 +31,15 @@ def _password(name):
 def _connect(name, acct):
     m = imaplib.IMAP4_SSL(acct.get("imap", "imap.gmail.com"), acct.get("imap_port", 993), timeout=30)
     m.login(acct["email"], _password(name))
+    if {"CONDSTORE", "ENABLE"} <= set(m.capabilities):
+        m.enable("CONDSTORE")  # SELECT then reports HIGHESTMODSEQ, which summaries() uses to skip unchanged folders
     return m
 
 
 class _Session:
     def __init__(self, m):
         self.m, self.folder, self.used = m, None, time.monotonic()
+        self.memo = {}  # (folder, n) -> ((HIGHESTMODSEQ, count), rows) from the last summaries() on this connection
 
 
 def _drop(name):
@@ -286,6 +289,9 @@ def summaries(s, folder, n, query=None):
     if folder is None:
         folder = next((_folder_name(line) for line in s.m.list()[1] if rb"\All" in line.split(b")")[0]), "INBOX")
     total = _select(s, folder, refresh=True)
+    mod = None if query else s.m.response("HIGHESTMODSEQ")[1][0]
+    if mod and s.memo.get((folder, n), (None,))[0] == (mod, total):  # nothing arrived, left or changed flags
+        return [dict(r) for r in s.memo[folder, n][1]]
     items = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)]"
     items += " X-GM-THRID X-GM-LABELS)" if gm else ")"
     if query:
@@ -316,7 +322,10 @@ def summaries(s, folder, n, query=None):
         withatt = set(data[0].decode().split()) if typ == "OK" else set()
         for r in rows:
             r["attach"] = r["id"] in withatt
-    return sorted(rows, key=lambda r: int(r["id"]), reverse=True)
+    rows.sort(key=lambda r: int(r["id"]), reverse=True)
+    if mod:
+        s.memo[folder, n] = ((mod, total), rows)
+    return [dict(r) for r in rows]
 
 
 # --- rules: Gmail filters, through the Gmail API (IMAP can't see filters) -------

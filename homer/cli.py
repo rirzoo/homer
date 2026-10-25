@@ -9,6 +9,7 @@ import signal
 import smtplib
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import daemon, gmail, outlook
@@ -34,7 +35,7 @@ def cmd_accounts(a, cfg):
 def cmd_login(a, cfg):
     name, acct, backend = account(cfg, a)
     backend.login(name, acct, rules=a.rules)
-    daemon.call({"stop": True})  # the helper still holds the old sign-in
+    daemon.call({"stop": True})  # the service still holds the old sign-in; systemd starts a fresh one
     print(f"ok: {name} logged in{' (rules too)' if a.rules else ''}")
 
 
@@ -127,6 +128,29 @@ def cmd_tui(a, cfg):
     except ModuleNotFoundError as e:
         die(f"the TUI needs Textual ({e}); install it with: pip install textual")
     tui.main(cfg, name)
+
+
+def cmd_daemon(a, cfg):
+    ctl = lambda *args, check=True: subprocess.run(["systemctl", "--user", *args], check=check)
+    if a.action == "enable":
+        daemon.UNIT.parent.mkdir(parents=True, exist_ok=True)
+        daemon.UNIT.write_text(daemon.unit_text())
+        daemon.call({"stop": True})  # a helper started by an older homer holds the socket
+        ctl("daemon-reload")
+        ctl("enable", "--now", "homer.service")
+        print("ok: homer.service keeps your mail synced in the background; homer daemon disable stops it")
+    elif a.action == "disable":
+        ctl("disable", "--now", "homer.service", check=False)
+        daemon.UNIT.unlink(missing_ok=True)
+        ctl("daemon-reload")
+        print("ok: homer.service is off and removed")
+    else:
+        state = subprocess.run(["systemctl", "--user", "is-active", "homer.service"],
+                               capture_output=True, text=True).stdout.strip() or "unknown"
+        from .store import CACHE
+        ages = [time.time() - p.stat().st_mtime for p in CACHE.glob("*/*.json") if p.name != "special.json"]
+        last = f", last sync {int(min(ages) // 60)}m ago" if ages else ""
+        print(f"homer.service: {state}{last}")
 
 
 def cmd_mkdir(a, cfg):
@@ -244,6 +268,10 @@ def parser():
 
     sub.add_parser("tui", parents=[common], help="browse and manage mail interactively").set_defaults(fn=cmd_tui)
 
+    p = sub.add_parser("daemon", help="background sync and notifications, as a systemd user service")
+    p.add_argument("action", choices=["enable", "disable", "status"])
+    p.set_defaults(fn=cmd_daemon)
+
     p = sub.add_parser("mkdir", parents=[common], help="create a folder (Gmail: a label)")
     p.add_argument("folder")
     p.set_defaults(fn=cmd_mkdir)
@@ -298,7 +326,7 @@ def main():
     argv = sys.argv[1:]
     if not argv or argv[0] in ("-a", "--account") or argv[0].startswith("--account="):
         argv = ["tui", *argv]  # bare `homer` (or `homer -a inst`) opens the TUI
-    a = parser().parse_args(argv)  # here, so --help and usage errors never reach the helper
+    a = parser().parse_args(argv)  # here, so --help and usage errors never reach the service
     if a.cmd in daemon.COMMANDS and os.environ.get("HOMER_DAEMON") != "0" and "HOMER_CONFIG" not in os.environ:
         piped = getattr(a, "body", "") is None and not sys.stdin.isatty()  # send/reply/forward read stdin then
         stdin = sys.stdin.read() if piped else None
@@ -307,7 +335,6 @@ def main():
             sys.stdout.write(reply["out"])
             sys.stderr.write(reply["err"])
             sys.exit(reply["code"])
-        daemon.spawn()  # none running, or it stepped aside: start one for next time and run this one here
-        if piped:
+        if piped:  # no service running (or it stepped aside): run the command here
             sys.stdin = io.StringIO(stdin)
     run(a)

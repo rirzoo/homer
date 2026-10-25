@@ -214,12 +214,13 @@ homer rules add [-a ACCT] [--name NAME] [--from ADDR] [--to ADDR] [--subject TEX
                 [--move FOLDER | --archive] [--read] [--delete] [--forward ADDR]
 homer rules edit ID [-a ACCT] [same flags as add, plus --no-read and --no-delete]
 homer rules rm ID... [-a ACCT]
+homer daemon  enable|disable|status              background sync and notifications (a systemd user service)
 homer         [-a ACCT]                          open the TUI (same as homer tui)
 ```
 
 `--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
 
-Homer keeps its mail connections open between commands. The first command starts a small background process that stays signed in, and later commands run through it instead of connecting and logging in again. That takes a Gmail `list` from about 2 seconds to about 1, and an Outlook one from about 1 second to 0.3, which adds up when an agent runs `list`, `read` and `reply` in a row. The process quits after 10 minutes without a command, and a fresh one takes over when Homer is updated. Only your user can reach it. `homer login` and the TUI don't use it, and `HOMER_DAEMON=0` turns it off.
+`homer daemon enable` starts a background service that keeps your mail synced and stays signed in. It runs as a systemd user service (`homer.service`), so it starts when you log in and keeps going after you close the TUI. Every two minutes it fetches the folders of every account, so the TUI opens on current mail instead of syncing first. It also shows a desktop notification for new mail in the folders you choose: Mailbox, unless you pick others with `N` in the TUI's folder pane. Commands run through it too and skip connecting and logging in, which takes a Gmail `list` from about 2 seconds to about 1 and an Outlook one from about 1 second to 0.3. Without the service, commands connect on their own as before. A fresh service takes over every 45 minutes, after `homer login` and when Homer is updated. Only your user can reach it. `homer daemon status` says whether it's running and when it last synced, `homer daemon disable` stops and removes it, and `HOMER_DAEMON=0` keeps a command from using it.
 
 `reply` answers the sender of message `ID` (add `--all` to include everyone else on it). It adds "Re:" to the subject, quotes the original under your text, and sets the headers mail apps use to keep the reply in the same conversation. Replying to a message you sent yourself goes to its original recipients, which is handy for a follow-up.
 
@@ -344,13 +345,15 @@ Nothing waits on the server. Archive, delete, move and mark take effect on scree
 | `?` | every key for the window you're in | same |
 | `q` | quit | back to the list |
 
-Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `is:read` `has:attachment` `before:2026-10-01` `after:2026-09-01` and plain words. Homer translates it for Gmail or Outlook. `+` loads 50 older conversations and `ctrl+r` syncs right away; Homer also syncs every two minutes on its own.
+Search takes one syntax on every account: `from:` `to:` `subject:` `is:unread` `is:read` `has:attachment` `before:2026-10-01` `after:2026-09-01` and plain words. Homer translates it for Gmail or Outlook. `+` loads 50 older conversations and `ctrl+r` syncs right away; Homer also syncs every two minutes on its own. With the background service on (`homer daemon enable`), the TUI opens on the mail the service fetched and doesn't wait for a sync.
 
 ### Folders
 
 Every account has the same four folders: Mailbox (your inbox and your sent mail together), Drafts, Archive and Trash. You can add your own per account with `n` in the folder pane, and `E` picks which server folders or Gmail labels feed one. In that list `Space` or `Enter` ticks a folder and `s` saves. If you untick everything, Mailbox and Archive go back to their defaults, and a folder of your own stays but shows nothing. Archive is the catch-all: it shows whatever isn't in Mailbox or one of your own folders. If Archive or one of your own folders is fed by more than one server folder, `e` and `M` ask which one the mail goes into, and the one you picked last is at the top. `Esc` leaves the mail where it is. Moves to Mailbox always go to your inbox. Homer writes these choices to `~/.config/homer/folders.toml`. It never creates, renames or deletes anything on the server; use `homer mkdir` for that.
 
 `R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/tui.toml`.
+
+`N` turns desktop notifications on or off for the folder under the cursor, and a folder that notifies is marked `♪`. Mailbox notifies unless you change it. The notifications come from the background service, so they need `homer daemon enable`.
 
 Newsletters often carry a plain-text copy full of tracking links and image placeholders. The TUI leaves those out, counts the links (`o` picks one) and lists only real attachments. A mail with images or heavy formatting says so above its text, and `v` shows it in your browser the way it was sent.
 
@@ -392,7 +395,6 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 ### Planned for the TUI
 
 - mouse support
-- desktop notifications for new mail
 - bold, lists and other formatting in the body (the body is plain text with links)
 
 ## Help & troubleshooting
@@ -405,7 +407,7 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
 - `secret-tool not found` means libsecret isn't installed (see Requirements).
-- `lost the background helper during the command` means the background process stopped while it was running your command. The command may have gone through, so check Sent or Drafts before you run a send again. `HOMER_DAEMON=0` turns the process off while you look into it.
+- `lost the background service during the command` means the service stopped while it was running your command. The command may have gone through, so check Sent or Drafts before you run a send again. `HOMER_DAEMON=0` keeps commands away from the service while you look into it.
 
 If you're stuck or something's broken, [open an issue](https://github.com/rirzoo/homer/issues) with the command you ran and the full error, minus your email address and any tokens. Feature requests (macOS keychain support, say) and pull requests are welcome too.
 
@@ -413,7 +415,7 @@ If you're stuck or something's broken, [open an issue](https://github.com/rirzoo
 
 Homer runs on your computer, and there's no Homer server. It connects only to the mail services in your config. For Gmail, those are Google's IMAP and SMTP servers, plus Google's sign-in and the Gmail API once you set up filters. For Microsoft 365, they're Microsoft's sign-in and its mail APIs. Homer collects no analytics and sends nothing to the Homer project or anyone else.
 
-App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. You can delete that folder at any time. Between commands, a background process holds your open mail connections and sign-in tokens in memory until 10 minutes after your last command. Only your user can reach it, through a socket in your private runtime folder.
+App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. You can delete that folder at any time. If you turn on the background service, it holds your open mail connections and sign-in tokens in memory while it runs, and it refreshes the cached message lists every two minutes. Only your user can reach it, through a socket in your private runtime folder.
 
 Once you allow filter access, Homer reads and changes your Gmail filters and reads your label names, and it does this only when you run a command that needs them. Homer's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
 
@@ -425,7 +427,7 @@ To remove what Homer keeps, run `secret-tool clear service homer` for the passwo
 python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/daemon.py` (the background process that keeps connections open between commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/daemon.py` (the background service that syncs mail for the TUI, sends notifications and keeps connections open for commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
 

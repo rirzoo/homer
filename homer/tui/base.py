@@ -19,7 +19,8 @@ from ..common import attachments, body_text, part_text
 DOWNLOADS = Path("~/Downloads").expanduser()
 DRAFTS = Path("~/.cache/homer/drafts").expanduser()  # what you write stays here until it's sent or saved (D14)
 VIEW = Path("~/.cache/homer/view").expanduser()  # mail and attachments handed to the browser or an app
-SEND_DELAY, READ_AFTER, SYNC_EVERY, WIDE, PAGE = 10, 2.0, 120, 100, 50
+SEND_DELAY, READ_AFTER, WIDE = 10, 2.0, 100
+SYNC_EVERY, PAGE = store.SYNC_EVERY, store.PAGE
 CAUGHT = (Exception, SystemExit)  # backends die() with SystemExit; a worker must never take the app down
 ADDR = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 URL = re.compile(r"https?://[^\s<>\"'\]]+")
@@ -63,6 +64,7 @@ Move      j k  ↑ ↓
 Open      Enter on a folder opens it; Enter on another account expands it
 Manage    n new folder   E edit what feeds it   D delete (homer only)
           R rename a folder of yours, or the account the cursor is on
+          N desktop notifications for new mail in it on/off (♪; needs homer daemon enable)
 Close     f or Esc""",
 }
 

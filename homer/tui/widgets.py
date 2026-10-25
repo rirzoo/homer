@@ -40,7 +40,8 @@ class FolderPane(NoWrap):
     BINDINGS = [Binding("j", "cursor_down", show=False), Binding("k", "cursor_up", show=False),
                 Binding("enter", "select", "open"), Binding("n", "screen.new_folder", "new folder"),
                 Binding("E", "screen.edit_folder", "edit mapping"), Binding("R", "screen.rename_folder", "rename"),
-                Binding("D", "screen.delete_folder", "delete folder"), Binding("f", "screen.folders", "close"),
+                Binding("D", "screen.delete_folder", "delete folder"),
+                Binding("N", "screen.notify_folder", "notifications"), Binding("f", "screen.folders", "close"),
                 Binding("escape", "screen.folders", "close", show=False)]
 
 

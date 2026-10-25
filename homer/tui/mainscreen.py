@@ -13,7 +13,7 @@ from textual.screen import Screen
 from textual.widgets import Footer, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from .. import store
+from .. import daemon, store
 from ..common import body_text, parse_query
 from . import base
 from .base import (
@@ -62,6 +62,8 @@ class MainScreen(Screen):
         self.raws, self.undo = {}, None
         self.picked = {}  # (account, homer folder) -> the server folder last moved into, offered first next time
         self.known = set()  # every mail seen in this view, so undo and moves never count as new mail
+        self.gone = set()  # (folder, id) moved away in this view, so a listing saved before the move can't bring it back
+        self.cache_at = None  # mtime of the cached listing on screen
         self.pane_acct = acct.name
         self.preview_timer = self.read_timer = None
 
@@ -85,14 +87,14 @@ class MainScreen(Screen):
     def on_mount(self):
         self.query_one("#list").focus()
         self.set_interval(1, self.tick)
-        self.set_interval(SYNC_EVERY, self.action_sync)
+        self.set_interval(SYNC_EVERY, self.sync_if_stale)
         self.show_cached()
         if self.app.config_note:
             self.say(self.app.config_note, True)
         if any(a.special is None for a in self.app.accounts.values()):
             self.first_run()
         else:
-            self.action_sync()
+            self.sync_if_stale()
 
     def on_resize(self, event):
         self.set_class(self.size.width < WIDE, "narrow")
@@ -143,6 +145,20 @@ class MainScreen(Screen):
                     self.app.call_from_thread(self.say, f"! {a.label}: {err(e)}", True)
         self.app.call_from_thread(self.action_sync)
 
+    def sync_if_stale(self):
+        """Sync, unless the background service saved this folder's listing in the last SYNC_EVERY seconds; then
+        that listing is as good as a sync and costs no wait (D27). Searches and + always go to the server."""
+        if self.query_dict or self.n > PAGE or not (self.acct.fresh(self.folder) and daemon.running()):
+            self.action_sync()
+        elif self.acct.saved_at(self.folder) != self.cache_at:
+            self.from_cache()
+
+    def from_cache(self):
+        at = self.acct.saved_at(self.folder)
+        self.loaded(self.token, [m for m in self.acct.cached(self.folder) if (m["folder"], m["id"]) not in self.gone],
+                    None)
+        self.synced_at = at  # loaded() took it to be now
+
     def action_sync(self):
         if self.syncing:
             return
@@ -182,6 +198,8 @@ class MainScreen(Screen):
         fresh = [m for m in msgs if m["msgid"] not in self.known and m["unread"]]
         before, self.known = self.known, self.known | {m["msgid"] for m in msgs}
         self.health, self.synced_at = "", time.time()
+        if not self.query_dict:
+            self.cache_at = self.acct.saved_at(self.folder)  # tick() reloads when the service saves a newer one
         if self.loaded_once and before and fresh and not self.query_dict:
             self.say(f"{len(fresh)} new in {self.folder}")
         self.msgs, self.loaded_once = msgs, True
@@ -198,10 +216,10 @@ class MainScreen(Screen):
         self.selected.clear()
         self.token += 1
         self.health, self.synced_at, self.loaded_once, self.n = "", None, False, PAGE
-        self.known = set()
+        self.known, self.gone, self.cache_at = set(), set(), None
         self.show_cached()
         self.query_one("#list", MailList).highlighted = 0 if self.convs else None
-        self.action_sync()
+        self.sync_if_stale()
 
     # --- the list ------------------------------------------------------------------------------------
 
@@ -402,7 +420,8 @@ class MainScreen(Screen):
         label = f'"{convs[0]["subject"]}"' if len(convs) == 1 else f"{len(convs)} conversations"
         backup = list(self.msgs)
         gone = {(f, i) for f, ids in jobs.items() for i in ids}
-        self.msgs = [m for m in self.msgs if (m["folder"], m["id"]) not in gone]
+        self.gone |= gone
+        self.msgs =[m for m in self.msgs if (m["folder"], m["id"]) not in gone]
         self.selected.clear()
         self.rebuild()
         self.say(f"{verb} {label}" + ("" if verb != "Moved" else f" to {dest}") + " · u undo")
@@ -656,6 +675,7 @@ class MainScreen(Screen):
             opts.append(Option(label, id=f"a\0{name}"))
             if not open_:
                 continue
+            notify = self.app.state.get("notify", {}).get(name, ["Mailbox"])
             for f in a.folders():
                 if f == (a.custom() or [None])[0]:
                     opts.append(Option(Text("  ─ yours ─", "dim"), disabled=True))
@@ -663,6 +683,8 @@ class MainScreen(Screen):
                 t = Text("  " + f)
                 if count:
                     t.append(f"  {count}", STYLE["unread"])
+                if f in notify:
+                    t.append("  ♪", "dim")
                 opts.append(Option(t, id=f"f\0{name}\0{f}"))
                 if name == self.acct.name and f == (keep or self.folder):
                     at = len(opts) - 1
@@ -672,8 +694,9 @@ class MainScreen(Screen):
 
     @work(thread=True, group="others", exclusive=True)
     def refresh_others(self):
+        served = daemon.running()
         for a in self.app.accounts.values():
-            if a is not self.acct:
+            if a is not self.acct and not (served and a.fresh("Mailbox")):  # the background service keeps it current
                 try:
                     if a.special is None:
                         a.load_special()
@@ -738,6 +761,19 @@ class MainScreen(Screen):
             self.app.push_screen(MapScreen(acct, folder), lambda ok: ok and self.mapped(acct, folder))
         elif folder:
             self.say(f"{folder} is found by homer and can't be remapped")
+
+    def action_notify_folder(self):
+        """N: whether the background service announces new mail in this folder (D27)."""
+        acct, folder = self.pane_folder()
+        if not folder:
+            return
+        notify = self.app.state.setdefault("notify", {})
+        on = notify.get(acct.name, ["Mailbox"])
+        notify[acct.name] = [f for f in on if f != folder] if folder in on else on + [folder]
+        store.save_state(self.app.state)
+        self.fill_pane(keep=folder)
+        tail = "" if daemon.running() else ". They come from the background service: homer daemon enable"
+        self.say(f"Notifications for {acct.label} · {folder}: {'on' if folder in notify[acct.name] else 'off'}{tail}")
 
     def action_rename_folder(self):
         pick = self.pane_pick()
@@ -919,6 +955,9 @@ class MainScreen(Screen):
             self.repaint_out(o)
         if self.synced_at and not self.syncing:
             self.paint_header()
+        if not (self.syncing or self.query_dict) and self.n == PAGE and self.cache_at is not None \
+                and self.acct.saved_at(self.folder) not in (None, self.cache_at):
+            self.from_cache()  # the background service saved a newer listing
 
     def repaint_out(self, o):
         key = next((c["key"] for c in self.convs if c.get("out") is o), None)

@@ -1,7 +1,9 @@
 """Data side of the TUI, kept free of Textual so it can be tested: homer folders, conversations, cache,
 contacts and the mail homer sends. Design notes are in docs/TUI.md (folder model) and docs/FRAME.md (D-numbers)."""
 import json
+import os
 import re
+import time
 import tomllib
 from collections import Counter
 from datetime import datetime, timezone
@@ -17,6 +19,7 @@ FOOTER_HTML = f'<p>Sent with <a href="{HOMER_URL}">homer</a></p>'
 FOLDERS_FILE = CONFIG.parent / "folders.toml"
 STATE_FILE = CONFIG.parent / "tui.toml"  # choices made inside the TUI: the theme and account names
 CACHE = Path("~/.cache/homer/tui").expanduser()
+SYNC_EVERY, PAGE = 120, 50  # seconds between syncs (the TUI's and the background service's); mails per listing
 BASE = ("Mailbox", "Drafts", "Archive", "Trash")
 EDITABLE = ("Mailbox", "Archive")  # Drafts and Trash are found by homer (D4, W2)
 # Gmail shows special folders to IMAP as labels with these names (X-GM-LABELS)
@@ -105,12 +108,14 @@ def load_state():
 
 
 def save_state(state):
-    """theme = "nord", then [colors] (role -> style) and [names] (account config key -> name shown)."""
-    q = lambda v: json.dumps(v, ensure_ascii=False)  # JSON strings are valid TOML basic strings
-    lines = ["# Written by homer's TUI: the theme and colours (ctrl+t) and account names (R in the folder pane)."]
+    """theme = "nord", then [colors] (role -> style), [names] (account config key -> name shown) and [notify]
+    (account config key -> the homer folders whose new mail the background service announces)."""
+    q = lambda v: json.dumps(v, ensure_ascii=False)  # JSON strings and lists of them are valid TOML
+    lines = ["# Written by homer's TUI: the theme and colours (ctrl+t), account names (R in the folder pane)",
+             "# and the folders that notify you of new mail (N in the folder pane)."]
     if state.get("theme"):
         lines.append(f"theme = {q(state['theme'])}")
-    for table in ("colors", "names"):
+    for table in ("colors", "names", "notify"):
         if state.get(table):
             lines += ["", f"[{table}]"] + [f"{q(k)} = {q(v)}" for k, v in state[table].items()]
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -215,8 +220,22 @@ class Account:
             return []
 
     def store(self, folder, msgs):
+        """Written whole and then renamed, since the TUI and the background service both write these."""
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._cache(folder).write_text(json.dumps(msgs))
+        tmp = self._cache(folder).with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(msgs))
+        tmp.replace(self._cache(folder))
+
+    def saved_at(self, folder):
+        """When this folder's listing was last saved, by the TUI or the background service (None: never)."""
+        try:
+            return self._cache(folder).stat().st_mtime
+        except FileNotFoundError:
+            return None
+
+    def fresh(self, folder):
+        at = self.saved_at(folder)
+        return at is not None and time.time() - at < SYNC_EVERY
 
     def contacts(self):
         """Addresses from your mail on this account, the ones you see most first (W8)."""
