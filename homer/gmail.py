@@ -11,6 +11,7 @@ import imaplib
 import re
 import secrets
 import smtplib
+import ssl
 import sys
 import threading
 import time
@@ -28,8 +29,15 @@ def _password(name):
     return secret_get(name, "password") or die(f"no password stored; run: homer login -a {name}")
 
 
+@functools.cache
+def _tls():
+    """Checks the server's certificate and name (S1). Built once per process, for IMAP and SMTP alike."""
+    return ssl.create_default_context()
+
+
 def _connect(name, acct):
-    m = imaplib.IMAP4_SSL(acct.get("imap", "imap.gmail.com"), acct.get("imap_port", 993), timeout=30)
+    m = imaplib.IMAP4_SSL(acct.get("imap", "imap.gmail.com"), acct.get("imap_port", 993), ssl_context=_tls(),
+                          timeout=30)
     m.login(acct["email"], _password(name))
     return m
 
@@ -162,7 +170,7 @@ def fetch_raw(s, folder, ref):
 
 def send(name, acct, msg, rcpts):
     with smtplib.SMTP(acct.get("smtp", "smtp.gmail.com"), acct.get("smtp_port", 587)) as s:
-        s.starttls()
+        s.starttls(context=_tls())
         s.login(acct["email"], _password(name))
         s.send_message(msg, to_addrs=rcpts)
 

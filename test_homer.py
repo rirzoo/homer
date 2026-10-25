@@ -130,6 +130,8 @@ print("inline images + attached forward ok")
 # backends: one cached connection per account, one call at a time, reconnect once when it drops
 import imaplib  # noqa: E402
 import json  # noqa: E402
+import smtplib  # noqa: E402
+import ssl  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
 from homer import gmail, outlook  # noqa: E402
@@ -154,6 +156,32 @@ class FakeIMAP:
     def shutdown(self):
         pass
 
+
+# S1: IMAP and SMTP check the server's certificate and name
+contexts, real = [], (imaplib.IMAP4_SSL, smtplib.SMTP, gmail._password)
+
+
+class FakeTLS:
+    def __init__(self, *a, ssl_context=None, **k):
+        contexts.extend([ssl_context] if a[0] == "imap.gmail.com" else [])
+
+    def login(self, *a, **k):
+        pass
+
+    def starttls(self, context=None):
+        contexts.append(context)
+
+    send_message = login
+    __enter__ = lambda self: self
+    __exit__ = lambda self, *a: None
+
+
+imaplib.IMAP4_SSL = smtplib.SMTP = FakeTLS
+gmail._password = lambda name: "pw"
+gmail._connect("t", {"email": "me@x.com"})
+gmail.send("t", {"email": "me@x.com"}, None, [])
+imaplib.IMAP4_SSL, smtplib.SMTP, gmail._password = real
+assert len(contexts) == 2 and all(c.verify_mode == ssl.CERT_REQUIRED and c.check_hostname for c in contexts)
 
 gmail._connect = lambda name, acct: FakeIMAP()
 got = []

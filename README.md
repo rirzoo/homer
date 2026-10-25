@@ -403,6 +403,7 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
 - `secret-tool not found` means libsecret isn't installed (see Requirements).
+- `CERTIFICATE_VERIFY_FAILED` means your system doesn't trust the mail server's certificate, or the certificate is for a different name. Homer checks it so that nobody between you and the server can read your password. If you run your own server with a self-signed certificate, point `SSL_CERT_FILE` at that certificate: `SSL_CERT_FILE=~/server.pem homer list -a home`. Homer then trusts only the certificates in that file, so add your system's bundle to it if you set it for Gmail too.
 - `lost the background helper during the command` means the background process stopped while it was running your command. The command may have gone through, so check Sent or Drafts before you run a send again. `HOMER_DAEMON=0` turns the process off while you look into it.
 
 If you're stuck or something's broken, [open an issue](https://github.com/rirzoo/homer/issues) with the command you ran and the full error, minus your email address and any tokens. Feature requests (macOS keychain support, say) and pull requests are welcome too.
