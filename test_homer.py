@@ -390,6 +390,15 @@ else:
     with tempfile.TemporaryDirectory() as tmp:
         store.CACHE, store.FOLDERS_FILE = Path(tmp) / "cache", Path(tmp) / "folders.toml"
         tui.base.DRAFTS, tui.base.SEND_DELAY = Path(tmp) / "drafts", 1
+
+        # S2: `v` pages block scripts and remote loads, after the doctype so the page keeps standards mode
+        tui.base.VIEW, opened, real_open = Path(tmp) / "view", [], tui.base.open_external
+        tui.base.open_external = opened.append
+        html = email.message.EmailMessage()
+        html.set_content("<!DOCTYPE html><p>hi<img src='https://t.example/pixel'></p>", subtype="html")
+        tui.base.open_in_browser(html)
+        tui.base.open_external = real_open
+        assert opened[0].read_text().startswith("<!DOCTYPE html>" + tui.base.CSP)
         box = {"INBOX": [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)],
                "Sent": [], "All": [], "Trash": []}
         done = []

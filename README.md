@@ -340,7 +340,7 @@ Nothing waits on the server. Archive, delete, move and mark take effect on scree
 | `/` | search; `Tab` in the search bar switches between this folder and all folders | |
 | `f` | folders and accounts | |
 | `s` / `o` | | save attachments / open a link |
-| `v` | open the mail in your browser, images included | same |
+| `v` | open the mail in your browser, with its embedded images | same |
 | `?` | every key for the window you're in | same |
 | `q` | quit | back to the list |
 
@@ -352,7 +352,7 @@ Every account has the same four folders: Mailbox (your inbox and your sent mail 
 
 `R` renames one of your folders, or the account under the cursor. An account's new name is only what the TUI shows, so `-a` and `homer login` still take the name from your config. The names live in `~/.config/homer/tui.toml`.
 
-Newsletters often carry a plain-text copy full of tracking links and image placeholders. The TUI leaves those out, counts the links (`o` picks one) and lists only real attachments. A mail with images or heavy formatting says so above its text, and `v` shows it in your browser the way it was sent.
+Newsletters often carry a plain-text copy full of tracking links and image placeholders. The TUI leaves those out, counts the links (`o` picks one) and lists only real attachments. A mail with images or heavy formatting says so above its text, and `v` shows it in your browser with its formatting and embedded images. Homer blocks remote images, tracking pixels and scripts, so the sender can't tell that you opened it.
 
 ### Writing mail
 
