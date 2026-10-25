@@ -3,13 +3,15 @@ import argparse
 import email
 import email.policy
 import imaplib
+import io
+import os
 import signal
 import smtplib
 import subprocess
 import sys
 from pathlib import Path
 
-from . import gmail, outlook
+from . import daemon, gmail, outlook
 from .common import (attachments, body_text, build_forward, build_message, build_reply, die, get_account, load_config,
                      save_attachments)
 
@@ -32,6 +34,7 @@ def cmd_accounts(a, cfg):
 def cmd_login(a, cfg):
     name, acct, backend = account(cfg, a)
     backend.login(name, acct, rules=a.rules)
+    daemon.call({"stop": True})  # the helper still holds the old sign-in
     print(f"ok: {name} logged in{' (rules too)' if a.rules else ''}")
 
 
@@ -180,8 +183,7 @@ def cmd_rules(a, cfg):
             print(f"updated rule {backend.edit_rule(name, acct, a.id, changes)}")
 
 
-def main():
-    signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `homer read ... | head` exits quietly
+def parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("-a", "--account", help="account name from config (default: config's default)")
     folder = argparse.ArgumentParser(add_help=False)
@@ -281,12 +283,31 @@ def main():
     q.add_argument("id", help="rule id from `homer rules`")
     q = acts.add_parser("rm", parents=[leaf], help="remove rules")
     q.add_argument("ids", nargs="+", help="rule ids from `homer rules`")
+    return ap
 
-    argv = sys.argv[1:]
-    if not argv or argv[0] in ("-a", "--account") or argv[0].startswith("--account="):
-        argv = ["tui", *argv]  # bare `homer` (or `homer -a inst`) opens the TUI
-    a = ap.parse_args(argv)
+
+def run(a):
     try:
         a.fn(a, load_config())
     except (imaplib.IMAP4.error, smtplib.SMTPException, OSError, subprocess.CalledProcessError) as e:
         die(e)
+
+
+def main():
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `homer read ... | head` exits quietly
+    argv = sys.argv[1:]
+    if not argv or argv[0] in ("-a", "--account") or argv[0].startswith("--account="):
+        argv = ["tui", *argv]  # bare `homer` (or `homer -a inst`) opens the TUI
+    a = parser().parse_args(argv)  # here, so --help and usage errors never reach the helper
+    if a.cmd in daemon.COMMANDS and os.environ.get("HOMER_DAEMON") != "0" and "HOMER_CONFIG" not in os.environ:
+        piped = getattr(a, "body", "") is None and not sys.stdin.isatty()  # send/reply/forward read stdin then
+        stdin = sys.stdin.read() if piped else None
+        reply = daemon.call({"argv": argv, "cwd": os.getcwd(), "stdin": stdin})
+        if reply:
+            sys.stdout.write(reply["out"])
+            sys.stderr.write(reply["err"])
+            sys.exit(reply["code"])
+        daemon.spawn()  # none running, or it stepped aside: start one for next time and run this one here
+        if piped:
+            sys.stdin = io.StringIO(stdin)
+    run(a)
