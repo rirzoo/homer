@@ -7,7 +7,7 @@ import time
 import tomllib
 from collections import Counter
 from datetime import datetime, timezone
-from email.utils import formataddr
+from email.utils import formataddr, getaddresses
 from html import escape
 from pathlib import Path
 
@@ -18,6 +18,7 @@ FOOTER_TEXT = f"Sent with homer ({HOMER_URL})"
 FOOTER_HTML = f'<p>Sent with <a href="{HOMER_URL}">homer</a></p>'
 FOLDERS_FILE = CONFIG.parent / "folders.toml"
 STATE_FILE = CONFIG.parent / "tui.toml"  # choices made inside the TUI: the theme and account names
+TEMPLATES = CONFIG.parent / "templates"  # <name>.txt: a greeting, boilerplate, a sign-off, with {body} and {first}
 CACHE = Path("~/.cache/homer/tui").expanduser()
 SYNC_EVERY, PAGE = 120, 50  # seconds between syncs (the TUI's and the background service's); mails per listing
 BASE = ("Mailbox", "Drafts", "Archive", "Trash")
@@ -108,18 +109,47 @@ def load_state():
 
 
 def save_state(state):
-    """theme = "nord", then [colors] (role -> style), [names] (account config key -> name shown) and [notify]
-    (account config key -> the homer folders whose new mail the background service announces)."""
+    """theme = "nord", then [colors] (role -> style), [backgrounds] (theme -> image), [names] (account config key
+    -> name shown) and [notify] (account config key -> the homer folders whose new mail the background service
+    announces)."""
     q = lambda v: json.dumps(v, ensure_ascii=False)  # JSON strings and lists of them are valid TOML
-    lines = ["# Written by homer's TUI: the theme and colours (ctrl+t), account names (R in the folder pane)",
-             "# and the folders that notify you of new mail (N in the folder pane)."]
+    lines = ["# Written by homer's TUI: the theme, colours and backgrounds (ctrl+t), account names (R in the folder",
+             "# pane) and the folders that notify you of new mail (N in the folder pane)."]
     if state.get("theme"):
         lines.append(f"theme = {q(state['theme'])}")
-    for table in ("colors", "names", "notify"):
+    for table in ("colors", "backgrounds", "names", "notify"):
         if state.get(table):
             lines += ["", f"[{table}]"] + [f"{q(k)} = {q(v)}" for k, v in state[table].items()]
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text("\n".join(lines) + "\n")
+
+
+def templates():
+    return sorted(p.stem for p in TEMPLATES.glob("*.txt"))
+
+
+def template(name):
+    try:
+        return (TEMPLATES / f"{name}.txt").read_text()
+    except OSError:
+        return ""
+
+
+def apply_template(tpl, text):
+    """Your text where the template says {body} (after it, if it doesn't say), and the line that lands on, so the
+    editor can open there."""
+    head, mark, tail = tpl.partition("{body}")
+    if not mark:
+        head, tail = tpl.rstrip("\n") + "\n\n", ""
+    return head + text.strip("\n") + tail, head.count("\n") + 1
+
+
+def first_name(to):
+    """{first}: the first recipient's first name, else the start of their address, else "there"."""
+    name, addr = (getaddresses([to]) or [("", "")])[0]
+    if name.split():
+        return (name.split(",")[-1].split() or name.split())[0].strip(",")  # "Das, Kavitha" is surname first
+    return addr.split("@")[0].split(".")[0].capitalize() or "there"
 
 
 def when_dt(when):

@@ -41,6 +41,8 @@ class MainScreen(Screen):
         Binding("u", "undo", "undo", show=False),
         Binding("space", "scroll(1)", "scroll", show=False),
         Binding("b", "scroll(-1)", show=False),
+        Binding("J", "scroll_line(1)", show=False),
+        Binding("K", "scroll_line(-1)", show=False),
         Binding("slash", "search", "search"),
         Binding("f", "folders", "folders"),
         Binding("T", "single", show=False),
@@ -315,7 +317,7 @@ class MainScreen(Screen):
             view.render_blocks([t])
             return
         last = len(c["msgs"]) - 1
-        width = view.scrollable_content_region.width or 50
+        width = view.text_width(50)
         view.render_blocks(conv_blocks(c, self.acct, self.raws, {last}, width)[0])
         m = c["msgs"][last]
         if loc(self.acct, m) not in self.raws:
@@ -571,8 +573,12 @@ class MainScreen(Screen):
         self.action_sync()
 
     def action_scroll(self, direction):
+        """Half a screen at a time and no animation, so the line you were reading stays in view."""
         view = self.query_one("#preview", ConvView)
-        view.scroll_page_down() if direction > 0 else view.scroll_page_up()
+        view.scroll_relative(y=direction * max(1, view.size.height // 2), animate=False)
+
+    def action_scroll_line(self, direction):
+        self.query_one("#preview", ConvView).scroll_relative(y=direction, animate=False)
 
     def action_browser(self):
         c = self.current()
@@ -583,7 +589,7 @@ class MainScreen(Screen):
         open_in_browser(msg)
         self.say("Opened in the browser")
 
-    LIST_ONLY = {"compose", "reply", "move", "toggle_read", "pick_move", "select", "undo", "scroll", "search",
+    LIST_ONLY = {"compose", "reply", "move", "toggle_read", "pick_move", "select", "undo", "scroll", "scroll_line", "search",
                  "folders", "single", "more", "sync", "clear", "browser"}
 
     def check_action(self, action, parameters):
@@ -845,7 +851,12 @@ class MainScreen(Screen):
 
     def new_state(self, acct, kind, **kw):
         st = {"acct": acct, "kind": kind, "orig": None, "to": "", "cc": "", "bcc": "", "subject": "", "attach": [],
-              "text": "", "conv": None, "draft": None, "headers": {}, "path": base.DRAFTS / f"{uuid.uuid4().hex}.txt"}
+              "text": "", "conv": None, "draft": None, "headers": {}, "path": base.DRAFTS / f"{uuid.uuid4().hex}.txt",
+              "fresh": True}
+        name = acct.acct.get("template" if kind == "new" else "reply_template")
+        tpl = store.template(name) if name else ""
+        if tpl and "text" not in kw:  # the account's default template; a reopened draft keeps its own text
+            st["text"], st["cursor"] = store.apply_template(tpl, "")
         st.update(kw)
         return st
 

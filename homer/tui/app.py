@@ -1,6 +1,7 @@
 """The app: accounts, theme and colour roles, and the window it starts on."""
 
 import re
+import shutil
 
 from rich.errors import StyleSyntaxError
 from rich.style import Style
@@ -11,11 +12,13 @@ from textual.widgets import Footer, Static
 
 from .. import store
 from ..cli import BACKENDS
+from . import kitty
 from .base import ROLES, STYLE, clean_view
 from .widgets import Header
 from .mainscreen import MainScreen
 from .reader import ReaderScreen
 from .look import LookScreen
+from .themes import DROPPED, THEMES, chrome
 
 
 class NoAccounts(Screen):
@@ -36,16 +39,16 @@ class Homer(App):
                 Binding("ctrl+t", "pick_theme", show=False)]
     CSS = """
     Screen { background: $background; }
-    Header { height: 1; background: $panel; }
+    Header { height: 1; background: $homer-bar; color: $homer-bar-text; }
     #hleft { width: 1fr; padding: 0 1; text-style: bold; }
-    #hright { width: auto; padding: 0 1; color: $text-muted; }
+    #hright { width: auto; padding: 0 1; color: $homer-bar-muted; }
     Status { height: 1; padding: 0 1; }
     Status.error { color: $error; }
     OptionList { border: none; padding: 0; background: $background; }
     #list, #folders, ConvView { scrollbar-gutter: stable; scrollbar-size-vertical: 1; }
     OptionList:focus { border: none; }
     #body { height: 1fr; }
-    #folders { width: 26; display: none; border-right: solid $panel-lighten-2; }
+    #folders { width: 26; display: none; border-right: $homer-rule $homer-rule-color; }
     MainScreen.panes #folders { display: block; }
     #listcol { width: 1fr; }
     #list { height: 1fr; }
@@ -53,25 +56,27 @@ class Homer(App):
     #searchrow.on { display: block; }
     #search { width: 1fr; height: 1; border: none; padding: 0 1; }
     #scope { width: auto; }
-    #preview { width: 1fr; border-left: solid $panel-lighten-2; padding: 0 1; }
+    #preview { width: 1fr; border-left: $homer-rule $homer-rule-color; padding: 0 1; }
     MainScreen.narrow #preview { display: none; }
     MainScreen.narrow.panes #listcol { display: none; }
     MainScreen.narrow.panes #folders { width: 1fr; }
-    ConvView .mail { margin-bottom: 1; }
+    ConvView { hatch: $homer-hatch; }
+    ConvView .mail { margin-bottom: 1; border: $homer-card; border-left: $homer-card-left; padding: $homer-card-pad;
+                     background: $homer-card-bg; }
     #reader { padding: 0 1; }
-    #form { height: auto; border-bottom: solid $panel-lighten-2; }
+    #form { height: auto; border-bottom: $homer-rule $homer-rule-color; }
     .field { height: 1; }
     .label { width: 10; padding: 0 1; color: $text-muted; }
     .field Input { width: 1fr; height: 1; border: none; padding: 0; }
     .field Input.bad { color: $error; text-style: underline; }
     FromField { width: 1fr; }
     FromField:focus { background: $boost; }
-    #suggest { display: none; height: auto; max-height: 8; width: 60; margin-left: 10; border: round $panel-lighten-2; }
+    #suggest { display: none; height: auto; max-height: 8; width: 60; margin-left: 10; border: $homer-box $panel-lighten-2; }
     #suggest.on { display: block; }
-    #attachments { height: auto; padding: 0 1; border-top: solid $panel-lighten-2; }
+    #attachments { height: auto; padding: 0 1; border-top: $homer-rule $homer-rule-color; }
     #bodyscroll { height: 1fr; padding: 0 1; }
     Box { align: center middle; background: $background 60%; }
-    .box { width: 64; height: auto; max-height: 80%; padding: 1 2; border: round $accent; background: $surface; }
+    .box { width: 64; height: auto; max-height: 80%; padding: 1 2; border: $homer-box $accent; background: $surface; }
     .box.wide { width: 84; }
     .box Input { border: tall $panel-lighten-2; }
     .box OptionList, .box SelectionList { height: auto; max-height: 14; }
@@ -83,24 +88,39 @@ class Homer(App):
     #list:focus > .option-list--option-highlighted, #roles:focus > .option-list--option-highlighted,
     #samplelist > .option-list--option-highlighted { color: $foreground; background: $primary 30%; }
     #look { height: 1fr; }
-    #lookleft { width: 44; border-right: solid $panel-lighten-2; }
+    #lookleft { width: 44; border-right: $homer-rule $homer-rule-color; }
     .looktitle { padding: 1 1 0 1; color: $text-muted; }
     #themes { height: 1fr; }
-    #roles { height: auto; }
+    #roles, #backbox, #backs { height: auto; }
     #sample { width: 1fr; }
     #samplebody { height: 1fr; }
     #samplelist { width: 3fr; }
-    #sampleconv { width: 2fr; border-left: solid $panel-lighten-2; padding: 0 1; }
+    #sampleconv { width: 2fr; border-left: $homer-rule $homer-rule-color; padding: 0 1; }
     """
 
     def __init__(self, cfg, name):
         super().__init__()
+        self.scroll_sensitivity_y = 1.0  # a line per wheel step; Textual's 2 races through a mail
+        for t in THEMES:
+            self.register_theme(t)
+        for n in DROPPED:
+            self.unregister_theme(n)
         maps, self.state = store.load_maps(), store.load_state()
         names = self.state.get("names", {})
         self.accounts = {n: store.Account(n, a, BACKENDS[a.get("provider", "gmail")], maps, names.get(n))
                          for n, a in cfg.get("accounts", {}).items() if a.get("provider", "gmail") in BACKENDS}
         self.first, self.outbox, self.look, self.config_note = name, [], cfg.get("tui", {}), ""
         self.attach_dir = "~/"  # where the attach box starts: the folder of the last file attached
+        self.dressed = None  # the kitty options last sent, so moving through ctrl+t only calls kitty on a change
+
+    imaged = False  # kitty is showing a background image behind homer
+
+    def get_css_variables(self):
+        v = super().get_css_variables()
+        v = {**chrome(v), **v}
+        if self.imaged:
+            v["homer-hatch"] = "none"  # the image is the texture; a hatch over it reads as a dark mesh
+        return v
 
     def colors(self):
         """Role styles as written: what you set with ctrl+t, else [tui.colors] in the config, else the default."""
@@ -131,10 +151,29 @@ class Homer(App):
                 break
         unknown = set(self.look.get("colors", {})) - set(ROLES)
         bad += [f"colors.{r} (roles: {', '.join(ROLES)})" for r in sorted(unknown)]
+        if self.look.get("window") == "kitty" and not kitty.inside() and not shutil.which("kitty"):
+            bad.append('window = "kitty" (kitty isn\'t installed)')
         self.config_note = "! [tui] in your config: ignored " + ", ".join(bad) if bad else ""
+
+    def background(self, theme):
+        """The background picked for a theme with ctrl+t; its first image until you pick, "none" for none."""
+        return self.state.get("backgrounds", {}).get(theme, next(iter(kitty.images(theme)), None))
+
+    def dress(self, pick=None):
+        """In homer's kitty window, give kitty the theme's font, background image and see-through colours."""
+        if not kitty.inside():
+            return
+        options = kitty.look(self.theme, pick or self.background(self.theme), self.get_css_variables())
+        if options != self.dressed:
+            self.dressed = options
+            kitty.dress(options)
+            if self.imaged != ("background_image=none" not in options):
+                self.imaged = not self.imaged
+                self.refresh_css(animate=False)
 
     def on_mount(self):
         self.paint_roles()
+        self.dress()
         if self.accounts:
             self.push_screen(MainScreen(self.accounts.get(self.first) or next(iter(self.accounts.values()))))
         else:
@@ -157,15 +196,17 @@ class Homer(App):
 
         def done(result):
             if result:
-                theme, colors = result
+                theme, colors, backgrounds = result
                 base = {**ROLES, **self.look.get("colors", {})}
                 self.state["theme"] = theme
                 self.state["colors"] = {r: v for r, v in colors.items() if v != base.get(r)}
+                self.state["backgrounds"] = backgrounds
                 store.save_state(self.state)
             self.paint_roles()
+            self.dress()
             self.repaint_all()
 
-        self.push_screen(LookScreen(self.theme, self.colors()), done)
+        self.push_screen(LookScreen(self.theme, self.colors(), self.state.get("backgrounds", {})), done)
 
     def action_safe_quit(self):
         main = next((s for s in self.screen_stack if isinstance(s, MainScreen)), None)
@@ -173,6 +214,8 @@ class Homer(App):
 
 
 def main(cfg, name):
+    if kitty.wanted(cfg) and kitty.open_window():
+        return  # homer carries on in its kitty window; this terminal gets its prompt back
     clean_view()
     Homer(cfg, name).run()
 

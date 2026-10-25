@@ -37,7 +37,8 @@ OUT_MARK = {"wait": ("↑", "bold cyan"), "sending": ("↑", "bold cyan"), "sent
 
 HELP = {
     "list": """\
-Move      j k  ↑ ↓   g G top/bottom   space b scroll the preview
+Move      j k  ↑ ↓   g G top/bottom
+Preview   space b half a page   J K a line
 Open      Enter full view   v open in the browser, images and all
 Write     c new   r reply   R reply all   F forward
 Handle    e archive   d delete   m read/unread   M move   u undo
@@ -60,7 +61,8 @@ Fields    Tab Shift+Tab or ↓ ↑ move between fields; type to fill in
           ↓ ↑ and Tab or Enter pick an address suggestion
           Enter in Subject opens your editor for the body
 Commands  Esc leaves the fields, then:
-          s send   b edit body   a attach   o open attachment   X remove one
+          s send   b edit body   t template (+ new, ctrl+e edit)
+          a attach   o open attachment   X remove one
           d save draft   q close (keeps a draft)   D discard
 Anywhere  ctrl+s send""",
     "folders": """\

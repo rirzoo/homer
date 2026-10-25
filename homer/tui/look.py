@@ -12,6 +12,7 @@ from textual.widgets import Footer, OptionList, Static
 from textual.widgets.option_list import Option
 
 from .. import store
+from . import kitty
 from .base import ROLES, STYLE, conv_blocks, list_row, loc
 from .widgets import ConvView, Header, MailList, NoWrap, Status
 
@@ -61,14 +62,14 @@ class RoleList(NoWrap):
 
 
 class LookScreen(Screen):
-    """Themes and colour roles beside a sample mailbox painted in them. Roles take the theme's own colours
-    ($accent …), so they follow every theme. Enter keeps it all, Esc puts back what you had."""
-    BINDINGS = [Binding("tab", "switch", "themes / colours", priority=True),
+    """Themes, colour roles and background images beside a sample mailbox painted in them. Roles take the theme's
+    own colours ($accent …), so they follow every theme. Enter keeps it all, Esc puts back what you had."""
+    BINDINGS = [Binding("tab", "switch", "themes / colours / background", priority=True),
                 Binding("enter", "save", "save", priority=True), Binding("escape", "dismiss(None)", "cancel")]
 
-    def __init__(self, theme, colors):
+    def __init__(self, theme, colors, backgrounds):
         super().__init__()
-        self.pick, self.draft = theme, dict(colors)
+        self.pick, self.draft, self.backs = theme, dict(colors), dict(backgrounds)
         self.convs, self.raws, self.acct = sample_mail()
 
     def compose(self):
@@ -80,6 +81,9 @@ class LookScreen(Screen):
                                id="themes")
                 yield Static(Text("Colours", "bold"), classes="looktitle")
                 yield RoleList(id="roles")
+                with Vertical(id="backbox"):
+                    yield Static(Text("Background", "bold"), classes="looktitle")
+                    yield MailList(id="backs")
             with Vertical(id="sample"):
                 yield Header(id="samplehead")
                 with Horizontal(id="samplebody"):
@@ -109,10 +113,31 @@ class LookScreen(Screen):
     @on(OptionList.OptionHighlighted, "#themes")
     def try_theme(self, event):
         self.pick = event.option.id
+        self.fill_backs()
         self.repaint()
+
+    @on(OptionList.OptionHighlighted, "#backs")
+    def try_back(self, event):
+        self.backs[self.pick] = event.option.id
+        self.app.dress(event.option.id)
+
+    def back(self):
+        return self.backs.get(self.pick) or self.app.background(self.pick)
+
+    def fill_backs(self):
+        """The images this theme comes with, and none; themes without images hide the list."""
+        names = kitty.images(self.pick)
+        box, backs = self.query_one("#backbox"), self.query_one("#backs", MailList)
+        box.display = bool(names)
+        backs.set_options([Option(n, id=n) for n in ("none", *names)] if names else [])
+        if names:
+            backs.highlighted = backs.get_option_index(self.back())
+        elif backs.has_focus:
+            self.query_one("#themes").focus()
 
     def repaint(self):
         self.app.paint_roles(self.pick, self.draft)
+        self.app.dress(self.back())
         roles = self.query_one("#roles", RoleList)
         at = roles.highlighted or 0
         lines = []
@@ -131,17 +156,21 @@ class LookScreen(Screen):
         view = self.query_one("#sampleconv", ConvView)
         conv = self.convs[0]
         view.render_blocks(conv_blocks(conv, self.acct, self.raws, set(range(len(conv["msgs"]))),
-                                       view.scrollable_content_region.width or 40)[0])
-        self.query_one(Status).say(f"{self.pick} · Tab moves between themes and colours; colours come from "
-                                   "the theme, so they change with it")
+                                       view.text_width(40))[0])
+        where = ("" if not kitty.images(self.pick) or kitty.inside() else
+                 '; backgrounds show in the kitty window ([tui] window = "kitty")')
+        self.query_one(Status).say(f"{self.pick} · Tab moves between themes, colours and background; colours come "
+                                   f"from the theme, so they change with it{where}")
 
     def role(self):
         roles = self.query_one("#roles", RoleList)
         return list(ROLES)[roles.highlighted or 0]
 
     def action_switch(self):
-        themes, roles = self.query_one("#themes"), self.query_one("#roles")
-        (roles if themes.has_focus else themes).focus()
+        lists = [self.query_one(f"#{n}") for n in ("themes", "roles", "backs")]
+        lists = [w for w in lists if w.display and w.option_count]
+        at = next((i for i, w in enumerate(lists) if w.has_focus), -1)
+        lists[(at + 1) % len(lists)].focus()
 
     def action_shade(self, d):
         """Step through the theme's colours (and "no colour") for the role under the cursor."""
@@ -165,5 +194,5 @@ class LookScreen(Screen):
         self.repaint()
 
     def action_save(self):
-        self.dismiss((self.pick, self.draft))
+        self.dismiss((self.pick, self.draft, self.backs))
 

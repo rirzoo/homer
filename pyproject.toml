@@ -16,3 +16,6 @@ homer = "homer.cli:main"
 
 [tool.setuptools]
 packages = ["homer", "homer.tui"]
+
+[tool.setuptools.package-data]
+"homer.tui" = ["fonts/*", "backgrounds/*"]
