@@ -217,9 +217,23 @@ with tempfile.TemporaryDirectory() as tmp:
     outlook._graph = lambda *a, **k: json.dumps({"value": [
         {"id": "AAMk1", "isRead": False, "receivedDateTime": "2026-10-11T10:00:00Z", "subject": "s"}]}).encode()
     assert outlook.list_messages("t", {}, "inbox", 5, False, None, ids=True)[0][0] == "AAMk1"
-    assert not any(Path(tmp).iterdir())  # ids=True leaves the agents' row numbers alone
-    assert outlook.list_messages("t", {}, "inbox", 5, False, None)[0][0] == "1"
-    assert json.loads((Path(tmp) / "t.json").read_text()) == ["AAMk1"]
+    assert not any(Path(tmp).iterdir())  # ids=True leaves the agents' ids alone
+    (Path(tmp) / "t.json").write_text('["old-row-numbers"]')  # what older Homer wrote
+    ref = outlook.list_messages("t", {}, "inbox", 5, False, None)[0][0]
+    assert len(ref) == 8 and int(ref, 16) >= 0 and outlook._resolve("t", ref) == "AAMk1"
+    outlook._graph = lambda *a, **k: json.dumps({"value": [
+        {"id": "AAMk2", "isRead": True, "receivedDateTime": "2026-10-12T10:00:00Z", "subject": "t"}]}).encode()
+    outlook.list_messages("t", {}, "sentitems", 5, False, None)
+    assert outlook._resolve("t", ref) == "AAMk1"  # a later list doesn't take the first one's ids away
+    assert outlook._resolve("t", "A" * 40) == "A" * 40  # a full Graph id passes through
+    try:
+        outlook._resolve("t", "3")
+        raise AssertionError("an unknown short id should die")
+    except SystemExit as e:
+        assert "recent listings" in str(e)
+    outlook.KEEP_IDS = 1
+    outlook.list_messages("t", {}, "sentitems", 5, False, None)
+    assert list(json.loads((Path(tmp) / "t.json").read_text()).values()) == ["AAMk2"]  # the oldest go first
 print("backend sessions ok")
 
 # TUI data side: search syntax, conversations, the catch-all Archive, folder map, footer, dates

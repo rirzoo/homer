@@ -47,7 +47,7 @@ def cmd_list(a, cfg):
     name, acct, backend = account(cfg, a)
     for ref, unread, when, who, subject in backend.list_messages(name, acct, a.folder, a.n, a.unread, a.search):
         date = when.astimezone().strftime("%Y-%m-%d %H:%M") if when else ""
-        print(f"{ref:>7} {'*' if unread else ' '} {date:16}  {who[:28]:28}  {subject}")
+        print(f"{ref:>8} {'*' if unread else ' '} {date:16}  {who[:28]:28}  {subject}")
 
 
 def cmd_read(a, cfg):
@@ -193,7 +193,7 @@ def parser():
     common.add_argument("-a", "--account", help="account name from config (default: config's default)")
     folder = argparse.ArgumentParser(add_help=False)
     folder.add_argument("-f", "--folder", default="INBOX")
-    id_help = "Gmail: UID from `list`; Outlook: # from the last `list`, or a full message id"
+    id_help = "Gmail: UID from `list`; Outlook: the ID from a recent `list`, or a full message id"
 
     ap = argparse.ArgumentParser(prog="homer", description="multi-account mail CLI (Gmail/IMAP, Microsoft 365)")
     sub = ap.add_subparsers(dest="cmd", required=True)

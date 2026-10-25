@@ -247,14 +247,14 @@ Provider differences:
 
 | | Gmail / IMAP | Outlook / Microsoft 365 |
 |---|---|---|
-| Message `ID` | UID shown by `list` (stable) | `#` from your most recent `list` on that account (or a full Graph message id) |
+| Message `ID` | UID shown by `list` (stable) | 8-character ID shown by `list`, the same every time for the same mail (or a full Graph message id) |
 | `--search` | IMAP SEARCH: `'FROM "bob" SINCE 1-Oct-2026'` | Outlook search (KQL): `'from:bob subject:exam'` |
 | Folder names | as `homer folders` shows them, e.g. `"[Gmail]/Sent Mail"`, `"[Gmail]/Bin"` | display name, or `inbox`, `sentitems`, `drafts`, `deleteditems`, `junkemail`, `archive` |
 | Delete | `move ID --to "[Gmail]/Trash"` (`[Gmail]/Bin` in some regions) | `move ID --to deleteditems` |
 | `rmdir` | removes the label and leaves its mail in All Mail. Other IMAP servers delete the mail with the folder, so Homer refuses while it still holds any | moves the folder and its mail to Deleted Items |
 | Limits | | max 4 MB per message incl. attachments; `mkdir` creates top-level folders |
 
-Outlook numbers are reassigned on every `list`, so run `list` on the folder right before `read`/`move`/`mark`.
+Homer remembers the Outlook IDs of the last 2,000 messages you've listed on each account, so an ID from an earlier `list` keeps working. Moving a message gives it a new ID, so list the folder it went to before you use it again.
 
 ### Rules and filters
 
@@ -310,7 +310,7 @@ Use `homer` for all mail. `homer --help` and `homer <command> --help` list the o
 - Accounts: `gmail` (the default, personal mail) and `inst` (institute mail). Pick one with `-a`.
 - Pass the body on stdin with a quoted heredoc (`<<'EOF'`) so quotes and `$` survive.
 - Answer a mail with `homer reply ID`, not `send`, so it stays in the same thread.
-- On Outlook accounts, IDs change with every `list`. Run `list` right before `read`, `move` or `mark`.
+- On Outlook accounts, a moved mail gets a new ID. List its new folder before you `read`, `move` or `mark` it again.
 - Ask me before adding, changing or removing a rule with `homer rules`, and before deleting a folder with `homer rmdir`.
 - Before sending, show me the recipient, subject and body and wait for my OK. If unsure, use `--draft`.
 ```
@@ -427,7 +427,7 @@ python3 test_homer.py      # offline self-check: messages, backends, the TUI's d
 
 Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/daemon.py` (the background process that keeps connections open between commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
 
-Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
+Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without touching the ID cache that `list` keeps for agents.
 
 The Fedora package is built from `homer.spec`. Copr runs `.copr/Makefile` to make the source RPM. It packs the current commit and downloads Textual and its dependencies as wheels, because the versions in Fedora are too old for the TUI. The RPM puts all of it in `/usr/share/homer`, so it never touches your system Python packages. To build it yourself:
 
