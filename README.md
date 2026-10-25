@@ -13,7 +13,7 @@ $ homer read -a inst 2 --save ~/Downloads
 $ homer send -a gmail --to prof@uni.edu -s "Assignment 3" -b "Please find it attached." --attach a3.pdf
 ```
 
-You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create and delete folders, move messages, mark them read or unread, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
+You can list, search and read mail, save attachments, send mail with attachments as plain text or HTML, reply in the same thread, forward mail with its attachments, save drafts, create and delete folders, move messages, mark them read or unread, sign mail with your OpenPGP key and check signed mail you get, and manage the rules that sort new mail on the server (filters, in Gmail). All your accounts sit side by side and you pick one with `-a`.
 
 Reading a message leaves it unread. Only `mark` changes that, so you (or an AI agent like Claude Code working for you) can look through mail without disturbing it. Every command takes and prints plain text, which is why agents can use it.
 
@@ -58,6 +58,7 @@ Opening a conversation, writing a reply in `vi` and sending it, switching to the
     - [Option B: ask your IT department](#option-b-ask-your-it-department)
 - [Usage](#usage)
   - [HTML mail](#html-mail)
+  - [Signing mail](#signing-mail)
   - [Rules and filters](#rules-and-filters)
 - [Using Homer from an agent](#using-homer-from-an-agent)
 - [TUI](#tui)
@@ -74,6 +75,7 @@ Opening a conversation, writing a reply in `vi` and sending it, switching to the
 
 - Python 3.11+
 - Linux with `secret-tool` (libsecret): Fedora `sudo dnf install libsecret`, Debian/Ubuntu `sudo apt install libsecret-tools`
+- `gpg` (GnuPG), only for [signing mail](#signing-mail): Fedora `sudo dnf install gnupg2`, Debian/Ubuntu `sudo apt install gnupg`
 
 ## Install
 
@@ -203,9 +205,9 @@ homer login   -a ACCT [--rules]                  link an account (--rules: also 
 homer folders -a ACCT                            list folders
 homer list    [-a ACCT] [-f FOLDER] [-n 20] [--unread] [--search QUERY]
 homer read    ID [-a ACCT] [-f FOLDER] [--save DIR]
-homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html]
-homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html]
-homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NOTE] [--attach FILE ...] [--draft] [--html] [--attached]
+homer send    [-a ACCT] --to ADDR [--cc ADDR] [--bcc ADDR] -s SUBJECT [-b BODY] [--attach FILE ...] [--draft] [--html] [--sign|--no-sign]
+homer reply   ID [-a ACCT] [-f FOLDER] [-b BODY] [--all] [--attach FILE ...] [--draft] [--html] [--sign|--no-sign]
+homer forward ID --to ADDR [--cc ADDR] [--bcc ADDR] [-a ACCT] [-f FOLDER] [-b NOTE] [--attach FILE ...] [--draft] [--html] [--attached] [--sign|--no-sign]
 homer mkdir   FOLDER [-a ACCT]
 homer rmdir   FOLDER [-a ACCT]
 homer move    ID... --to FOLDER [-a ACCT] [-f FROM]
@@ -255,6 +257,38 @@ Provider differences:
 | Limits | | max 4 MB per message incl. attachments; `mkdir` creates top-level folders |
 
 Homer remembers the Outlook IDs of the last 2,000 messages you've listed on each account, so an ID from an earlier `list` keeps working. Moving a message gives it a new ID, so list the folder it went to before you use it again.
+
+### Signing mail
+
+Homer can sign your mail with an OpenPGP key. People whose mail app checks signatures can then see that the mail came from you and wasn't changed on the way. Homer uses `gpg` for this, and your key stays in gpg's keyring.
+
+If you don't have a key yet, make one for the account's address:
+
+```sh
+gpg --quick-gen-key "Your Name <you@gmail.com>"
+```
+
+Then turn signing on for that account in `accounts.toml`:
+
+```toml
+[accounts.gmail]
+email = "you@gmail.com"
+sign = true
+pgp_key = "0123456789ABCDEF"   # optional; without it gpg picks the key for the account's address
+```
+
+After that, `send`, `reply` and `forward` sign everything from the account, and so does the TUI. `--no-sign` skips signing for one mail, and `--sign` signs one mail from an account that doesn't sign by default. If your key has a passphrase, gpg asks for it. A terminal prompt can't draw over the TUI, so before sending from the TUI, unlock the key (sign anything with gpg) or use a desktop pinentry.
+
+Mail apps that check OpenPGP, like Thunderbird, show the signature as valid. Others show a small `signature.asc` attachment.
+
+`homer read` and the TUI check signed mail you receive and show what gpg found:
+
+- `good signature from NAME <ADDR>`: the mail is unchanged since it was signed, by a key you trust.
+- `good signature ..., key not verified`: the signature matches the key, but you haven't confirmed that the key belongs to that person. Anyone can put any name and address on a key, so check the fingerprint with them, then mark it with `gpg --lsign-key ADDR`.
+- `BAD signature`: the mail was changed after it was signed.
+- `signed with key ..., which isn't in your keyring`: fetch the sender's key with the `gpg --locate-keys` command it shows. Homer never fetches keys by itself, because asking a key server for one tells it whose mail you're reading.
+
+Homer checks PGP/MIME signatures, which Thunderbird and most other apps send. It doesn't check the older inline kind that starts with `-----BEGIN PGP SIGNED MESSAGE-----`.
 
 ### Rules and filters
 
@@ -394,6 +428,7 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 - mouse support
 - desktop notifications for new mail
 - bold, lists and other formatting in the body (the body is plain text with links)
+- setting up signing: pick or make a key, and choose whether an account signs by default
 
 ## Help & troubleshooting
 
@@ -425,7 +460,7 @@ To remove what Homer keeps, run `secret-tool clear service homer` for the passwo
 python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/daemon.py` (the background process that keeps connections open between commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, OpenPGP signing, search syntax), `homer/daemon.py` (the background process that keeps connections open between commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without touching the ID cache that `list` keeps for agents.
 

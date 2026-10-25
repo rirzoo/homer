@@ -14,6 +14,7 @@ BuildRequires:  python3-devel
 BuildRequires:  python3-pip
 Requires:       python3 >= 3.11
 Requires:       libsecret
+Recommends:     gnupg2
 
 %description
 Homer reads, sends, replies to and organises mail from the terminal, across

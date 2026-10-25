@@ -389,6 +389,45 @@ finally:
     http.server.HTTPServer, gmail.webbrowser.open = real_server, real[4]
 print("rules ok")
 
+# OpenPGP: a signed mail survives being written out for SMTP or IMAP, and any change to it shows up
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+if shutil.which("gpg"):
+    with tempfile.TemporaryDirectory() as tmp:
+        os_env = dict(os.environ)
+        os.environ["GNUPGHOME"] = tmp
+        try:
+            subprocess.run(["gpg", "--batch", "--passphrase", "", "--quick-gen-key", "T <t@example.com>", "ed25519",
+                            "sign", "never"], check=True, capture_output=True)
+            att = Path(tmp) / "notes.pdf"
+            att.write_bytes(b"%PDF fake\xff")
+            acct = {"email": "t@example.com"}
+            plain = homer.build_message(acct, ["x@example.com"], [], [], "Héllo", "wörld, ünïcode\n", [att])
+            signed = homer.sign(acct, plain)
+            for pol in (email.policy.SMTP, email.policy.default):  # smtplib and Graph use CRLF, IMAP APPEND here LF
+                raw = signed.as_bytes(policy=pol)
+                back = email.message_from_bytes(raw, policy=email.policy.default)
+                assert homer.signature(raw).startswith("good signature from T <t@example.com>"), homer.signature(raw)
+                assert homer.body_text(back).strip() == "wörld, ünïcode" and back["Subject"] == "Héllo"
+                assert [p.get_filename() for p in homer.attachments(back)] == ["notes.pdf"]  # no signature.asc
+            raw = signed.as_bytes(policy=email.policy.SMTP)
+            assert homer.signature(raw.replace(b"=C3=B6", b"=C3=A4", 1)).startswith("BAD")
+            assert homer.signature(plain.as_bytes()) is None
+            try:
+                homer.sign({"email": "nobody@example.com"}, plain)
+                raise AssertionError("signed without a key")
+            except SystemExit as e:
+                assert "gpg --quick-gen-key" in str(e)
+        finally:
+            subprocess.run(["gpgconf", "--kill", "gpg-agent"], capture_output=True)
+            os.environ.clear()
+            os.environ.update(os_env)
+    print("signing ok")
+else:
+    print("signing skipped: no gpg")
+
 # the background helper: a command runs as `homer` would, over a real socket, and a code change makes it step aside
 import os  # noqa: E402
 import sys  # noqa: E402

@@ -1,12 +1,16 @@
 """Shared bits: config, keyring secrets, and building/parsing messages."""
+import email
+import email.policy
 import email.utils
 import json
 import mimetypes
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
+import tempfile
 import tomllib
 import urllib.error
 import urllib.parse
@@ -127,7 +131,8 @@ def body_text(msg):
 
 
 def attachments(msg):
-    return [p for p in msg.walk() if not p.is_multipart() and p.get_filename()]
+    return [p for p in msg.walk() if not p.is_multipart() and p.get_filename()
+            and p.get_content_type() != "application/pgp-signature"]  # a signature shows as a Signature: line instead
 
 
 def save_attachments(parts, directory):
@@ -255,6 +260,95 @@ def build_forward(acct, orig, to, cc, bcc, body="", attach=(), html=False, attac
             msg.add_attachment(p.get_payload(decode=True) or b"", maintype=maintype, subtype=subtype,
                                filename=p.get_filename())
     return msg
+
+
+# --- OpenPGP signatures (PGP/MIME, RFC 3156, through the gpg command) --------
+
+def _gpg(args, data):
+    """Run gpg with data on stdin; None if gpg isn't installed."""
+    env = dict(os.environ)
+    if "GPG_TTY" not in env and sys.stderr.isatty():
+        env["GPG_TTY"] = os.ttyname(2)  # lets a terminal pinentry ask for the key's passphrase
+    try:
+        return subprocess.run(["gpg", "--batch", *args], input=data, capture_output=True, env=env)
+    except FileNotFoundError:
+        return None
+
+
+def sign(acct, msg):
+    """msg's content becomes the first part of a multipart/signed and gpg's detached signature the second, made with
+    acct's pgp_key, or whichever key gpg has for acct's address. The signed bytes are written out by hand here and
+    Python's generator leaves multipart/signed parts as they are, so sending doesn't change them."""
+    inner = email.message_from_bytes(msg.as_bytes(), policy=email.policy.default)
+    for part in inner.walk():  # a relay may re-encode 8bit text on the way, which would break the signature
+        if not part.is_multipart() and part.get("Content-Transfer-Encoding", "").lower() == "8bit":
+            part.set_content(part.get_content(), subtype=part.get_content_subtype(), cte="quoted-printable")
+    for h in set(inner.keys()):
+        if not h.lower().startswith("content-"):
+            del inner[h]
+    data = inner.as_bytes(policy=email.policy.SMTP)
+    key = acct.get("pgp_key") or acct["email"]
+    r = _gpg(["--armor", "--detach-sign", "--digest-algo", "SHA256", "-u", key], data)
+    if r is None:
+        die("signing needs gpg; install GnuPG (Fedora: gnupg2, Debian/Ubuntu: gnupg)")
+    if r.returncode:
+        err = r.stderr.decode(errors="replace").strip()
+        hint = f'\nmake one with: gpg --quick-gen-key "Your Name <{acct["email"]}>"' if "No secret key" in err \
+            or "skipped" in err else ""
+        die(f"gpg couldn't sign with {key}: {err}{hint}")
+    b = b"homer-" + secrets.token_hex(12).encode()
+    head = b"".join(email.policy.SMTP.fold_binary(k, v) for k, v in msg.items()
+                    if not k.lower().startswith("content-") and k.lower() != "mime-version")
+    sig = b"\r\n".join(r.stdout.strip().splitlines())
+    raw = (head + b'MIME-Version: 1.0\r\nContent-Type: multipart/signed; micalg=pgp-sha256;\r\n'
+           b' protocol="application/pgp-signature"; boundary="' + b + b'"\r\n\r\n'
+           b"--" + b + b"\r\n" + data + b"\r\n--" + b + b"\r\n"
+           b'Content-Type: application/pgp-signature; name="signature.asc"\r\n'
+           b'Content-Disposition: attachment; filename="signature.asc"\r\n\r\n'
+           + sig + b"\r\n--" + b + b"--\r\n")
+    return email.message_from_bytes(raw, policy=email.policy.default)
+
+
+def signature(raw, msg=None):
+    """What gpg says about a PGP/MIME signature, in words; None if the mail isn't signed that way.
+    ponytail: top-level multipart/signed only; inline (BEGIN PGP SIGNED MESSAGE) and nested signatures go unchecked.
+    Homer never looks keys up on a keyserver, since that tells it which mail you're reading."""
+    msg = msg or email.message_from_bytes(raw, policy=email.policy.default)
+    if msg.get_content_type() != "multipart/signed" or \
+            str(msg.get_param("protocol", "")).lower() != "application/pgp-signature":
+        return None
+    raw = re.sub(rb"\r?\n", b"\r\n", raw)
+    b = b"\r\n--" + (msg.get_boundary() or "").encode()
+    start = raw.find(b + b"\r\n")
+    end = raw.find(b, start + len(b))
+    parts = msg.get_payload()
+    if start < 0 or end < 0 or len(parts) != 2:
+        return "can't check: the signed mail is malformed"
+    with tempfile.NamedTemporaryFile(suffix=".asc") as f:
+        f.write(parts[1].get_payload(decode=True) or b"")
+        f.flush()
+        r = _gpg(["--status-fd", "1", "--verify", f.name, "-"], raw[start + len(b) + 2:end])
+    if r is None:
+        return "can't check: gpg isn't installed"
+    st = {}
+    for line in r.stdout.decode(errors="replace").splitlines():
+        if line.startswith("[GNUPG:] "):
+            kw, _, rest = line[9:].partition(" ")
+            st[kw] = rest
+    uid = lambda kw: re.sub(r"[\x00-\x1f\x7f-\x9f]", "", st[kw].partition(" ")[2])  # whoever made the key wrote it
+    if "GOODSIG" in st:
+        trusted = "TRUST_FULLY" in st or "TRUST_ULTIMATE" in st
+        return f"good signature from {uid('GOODSIG')}" + ("" if trusted else ", key not verified")
+    if "BADSIG" in st:
+        return f"BAD signature from {uid('BADSIG')}: the mail was changed after it was signed"
+    if "EXPKEYSIG" in st:
+        return f"good signature from {uid('EXPKEYSIG')}, but the key has expired"
+    if "REVKEYSIG" in st:
+        return f"signed by {uid('REVKEYSIG')} with a key they have revoked"
+    if "NO_PUBKEY" in st:
+        frm = msg["from"].addresses[0].addr_spec if msg["from"] is not None and msg["from"].addresses else "ADDRESS"
+        return f"signed with key {st['NO_PUBKEY']}, which isn't in your keyring (gpg --locate-keys {frm})"
+    return "can't check: " + (r.stderr.decode(errors="replace").strip().splitlines() or ["gpg failed"])[-1]
 
 
 # --- search -----------------------------------------------------------------
