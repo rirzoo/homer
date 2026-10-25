@@ -5,6 +5,7 @@ import email
 import email.policy
 import re
 import subprocess
+import time
 import uuid
 from email.utils import formataddr, getaddresses
 from pathlib import Path
@@ -123,6 +124,14 @@ def inline(part):
     """An image drawn inside the mail (a logo, a signature), as opposed to a file someone attached."""
     return part.get_content_maintype() == "image" and bool(
         part["Content-ID"] or part.get_content_disposition() == "inline")
+
+
+def clean_view():
+    """Delete what `v` and attachments left in VIEW over a day ago (S4). Not at quit: the browser may still be
+    reading a file then."""
+    for f in VIEW.glob("*"):
+        if f.is_file() and f.stat().st_mtime < time.time() - 86400:
+            f.unlink(missing_ok=True)
 
 
 def open_in_browser(msg):

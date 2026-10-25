@@ -405,6 +405,13 @@ else:
         tui.base.open_in_browser(html)
         tui.base.open_external = real_open
         assert opened[0].read_text().startswith("<!DOCTYPE html>" + tui.base.CSP)
+
+        # S4: what was opened over a day ago is deleted, what was opened just now stays
+        old = tui.base.VIEW / "old.pdf"
+        old.write_bytes(b"x")
+        os.utime(old, (time.time() - 90000,) * 2)
+        tui.base.clean_view()
+        assert list(tui.base.VIEW.iterdir()) == [opened[0]]
         box = {"INBOX": [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)],
                "Sent": [], "All": [], "Trash": []}
         done = []

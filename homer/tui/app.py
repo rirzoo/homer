@@ -11,7 +11,7 @@ from textual.widgets import Footer, Static
 
 from .. import store
 from ..cli import BACKENDS
-from .base import ROLES, STYLE
+from .base import ROLES, STYLE, clean_view
 from .widgets import Header
 from .mainscreen import MainScreen
 from .reader import ReaderScreen
@@ -172,5 +172,6 @@ class Homer(App):
 
 
 def main(cfg, name):
+    clean_view()
     Homer(cfg, name).run()
 
