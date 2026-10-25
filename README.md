@@ -358,6 +358,8 @@ Newsletters often carry a plain-text copy full of tracking links and image place
 
 `c`, `r`, `R` and `F` open a form. You type the recipients (with suggestions from people you've mailed) and the subject in Homer, and the body in your own editor (`$VISUAL`, else `$EDITOR`, else `vi`), which `b` or `Enter` in the Subject field opens. Inside the form `Esc` switches from typing to single-key commands: `s` send, `a` attach, `d` save a draft, `q` close (keeps a draft), `D` discard. `ctrl+s` sends from anywhere.
 
+`a` opens a small box for attaching files. It starts in the folder you last attached from and lists that folder under the path you're typing. Type any part of a name, in any case, or a pattern like `report*`, and the list narrows to the matches, each file with its size. `Tab` puts the highlighted entry into the path, and when it's a folder the list shows what's inside. `Enter` attaches the file under the cursor. To attach several files from one folder, mark them with `ctrl+space` and press `Enter` once. Back in the form, `o` opens an attachment so you can check it's the right file, and `X` removes one.
+
 Every mail from the TUI goes out as HTML with a plain-text copy and ends with "Sent with homer", linking to this repository. The footer is shown in the form and can't be removed there; `homer send` from the command line doesn't add it.
 
 A sent mail appears at the top of Mailbox with a 10-second countdown, during which `u` takes it back. Then it shows `↑` while sending and `✓` once it's gone. If sending fails the row turns red with `!` and the reason, and `Enter` reopens it. Quitting while a mail is still counting down sends it first.

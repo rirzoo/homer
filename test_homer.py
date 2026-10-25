@@ -522,4 +522,57 @@ else:
                 await check(1)
 
         asyncio.run(drive3())
+
+        # attaching: the folder is listed under the path, any part of a name or a glob finds a file, ignoring
+        # case; Tab opens a folder, ctrl+space marks files and Enter attaches the marked ones
+        ents = [("2026-Report-final.pdf", False), ("report.txt", False), ("Reports", True), (".hidden", False)]
+        assert tui.modals.path_matches(ents, "rep") == [ents[1], ents[2], ents[0]]
+        assert tui.modals.path_matches(ents, "REPORT*") == [ents[1], ents[2]]
+        assert tui.modals.path_matches(ents, "") == ents[:3] and tui.modals.path_matches(ents, ".h") == [ents[3]]
+        files = Path(tmp) / "files"
+        (files / "Sub").mkdir(parents=True)
+        for n in ("filename-that-is-long.pdf", "other.txt", "Sub/inner.txt"):
+            (files / n).write_text("x")
+
+        async def drive4():
+            tui.app.BACKENDS = {"gmail": fake3}
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(140, 30)) as pilot:
+                await pilot.pause(0.3)
+                await pilot.press("c", "escape", "a")
+                await pilot.pause(0.2)
+                pick = app.screen
+                pick.query_one("#path").value = f"{files}/filen*"
+                await pilot.pause(0.1)
+                assert [os.path.basename(p) for p, _ in pick.shown] == ["filename-that-is-long.pdf"]
+                await pilot.press("enter")
+                await pilot.pause(0.1)
+                compose = app.screen
+                assert compose.st["attach"] == [str(files / "filename-that-is-long.pdf")]
+                assert app.attach_dir == f"{files}/"
+                await pilot.press("a")
+                await pilot.pause(0.2)
+                pick = app.screen
+                assert pick.query_one("#path").value == f"{files}/" and len(pick.shown) == 3
+                await pilot.press(*"SU", "tab")  # a folder: Tab goes into it
+                await pilot.pause(0.1)
+                assert pick.query_one("#path").value == f"{files}/Sub/" and len(pick.shown) == 1
+                await pilot.press("backspace", *"/../OTH", "ctrl+space")
+                await pilot.pause(0.1)
+                assert "1 marked" in str(pick.query_one("#hint").render())
+                assert [Path(p).name for p in pick.marked] == ["other.txt"], (pick.marked, pick.query_one("#path").value)
+                await pilot.press(*["backspace"] * 3, "ctrl+space", "enter")  # the first row now: filename…
+                await pilot.pause(0.1)
+                assert [Path(p).name for p in compose.st["attach"]] == [
+                    "filename-that-is-long.pdf", "other.txt", "filename-that-is-long.pdf"]
+                await pilot.press("a")
+                await pilot.pause(0.2)
+                app.screen.query_one("#path").value = "/no/such/folder/x"
+                await pilot.pause(0.1)
+                assert "Can't read" in str(app.screen.query_one("#hint").render())
+                app.screen.query_one("#path").value = f"{files}/zzz"
+                await pilot.pause(0.1)
+                assert 'No match for "zzz"' in str(app.screen.query_one("#hint").render())
+
+        asyncio.run(drive4())
         print("tui ok")

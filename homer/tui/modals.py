@@ -1,5 +1,6 @@
 """Small windows."""
 
+import fnmatch
 import os
 import time
 from pathlib import Path
@@ -17,7 +18,7 @@ from .base import CAUGHT, DOWNLOADS, VIEW, err, human, open_external, send_now
 
 
 class Box(ModalScreen):
-    """A box over the current window (W6, W14, W15, W17, W20)."""
+    """A box over the current window (W6, W14, W15, W17, W20, W23)."""
 
 
 class MovePicker(Box):
@@ -147,42 +148,130 @@ class NameModal(Box):
             self.dismiss(name)
 
 
+def path_matches(entries, stem):
+    """The (name, is_dir) entries matching stem, ignoring case: a glob when it has * ? or [, otherwise every
+    name containing it, the ones starting with it first. Dotfiles only when stem starts with a dot."""
+    s = stem.lower()
+    pool = [e for e in entries if stem.startswith(".") or not e[0].startswith(".")]
+    if any(c in s for c in "*?["):
+        return [e for e in pool if fnmatch.fnmatchcase(e[0].lower(), s)]
+    return ([e for e in pool if e[0].lower().startswith(s)]
+            + [e for e in pool if s in e[0].lower() and not e[0].lower().startswith(s)])
+
+
 class PathModal(Box):
-    """Attach a file; Tab completes the path."""
-    BINDINGS = [Binding("escape", "dismiss(None)", "cancel"), Binding("tab", "complete", "complete", priority=True)]
+    """Attach files (W23): the folder in the path is listed under it and filtered as you type."""
+    BINDINGS = [Binding("escape", "dismiss(None)", "cancel"), Binding("tab", "fill", "complete", priority=True),
+                Binding("ctrl+space", "mark", "mark", priority=True),
+                Binding("down", "move(1)", show=False), Binding("up", "move(-1)", show=False)]
+    LIMIT = 50  # rows listed; the hint counts the rest
+    KEYS = "tab complete  ↑↓ pick  ctrl+space mark  enter attach  esc cancel"
+
+    def __init__(self, start="~/"):
+        super().__init__()
+        self.start, self.marked, self.dirs, self.shown, self.listed = start, [], {}, [], None  # dirs: read once
 
     def compose(self):
-        with Vertical(classes="box"):
-            yield Static(Text("Attach a file", "bold"))
-            yield Input(placeholder="~/Downloads/notes.pdf")
-            yield Static(Text("Tab complete  Enter attach  Esc cancel", "dim"), id="hint")
+        with Vertical(classes="box wide"):
+            yield Static(Text("Attach files", "bold"))
+            yield Input(self.start, id="path")
+            yield OptionList(id="choices")
+            yield Static(id="hint")
 
-    def action_complete(self):
+    def on_mount(self):
         box = self.query_one(Input)
-        typed = box.value + "/" if box.value == "~" else box.value
-        folder, stem = os.path.split(typed)  # typed ends in stem, so completing is just appending
-        where = os.path.expanduser(folder) or "."
+        box.focus()
+        box.cursor_position = len(box.value)
+        self.relist()
+
+    def split(self):
+        """What's typed -> (its folder part as typed, that folder on disk, the name being typed)."""
+        typed = self.query_one(Input).value
+        typed += "/" if typed == "~" else ""
+        stem = os.path.basename(typed)
+        return typed[:len(typed) - len(stem)], os.path.expanduser(os.path.dirname(typed)) or ".", stem
+
+    def entries(self, where):
+        if where not in self.dirs:
+            with os.scandir(where) as it:
+                self.dirs[where] = sorted(((e.name, e.is_dir()) for e in it), key=lambda e: e[0].lower())
+        return self.dirs[where]
+
+    @on(Input.Changed)
+    def relist(self):
+        shown_as, where, stem = self.split()
+        lst, hint = self.query_one("#choices", OptionList), self.query_one("#hint", Static)
         try:
-            hits = sorted(n for n in os.listdir(where) if n.startswith(stem) and (stem[:1] == "." or n[:1] != "."))
+            hits = path_matches(self.entries(where), stem)
         except OSError:
             hits = []
-        if not hits:
-            return
-        done = typed[:len(typed) - len(stem)] + os.path.commonprefix(hits)
-        if len(hits) == 1 and os.path.isdir(os.path.join(where, hits[0])):
-            done += "/"
-        box.value = done
-        box.cursor_position = len(done)
-        if len(hits) > 1:
-            self.query_one("#hint", Static).update(Text("  ".join(hits[:8]), "dim"))
+            hint.update(Text(f"Can't read {shown_as or '.'}", "red"))
+        else:
+            more = f"  +{len(hits) - self.LIMIT} more" if len(hits) > self.LIMIT else ""
+            marked = f"  {len(self.marked)} marked" if self.marked else ""
+            hint.update(Text(self.KEYS + more + marked, "dim") if hits
+                        else Text(f'No match for "{stem}" in {shown_as or "."}', "red"))
+        self.shown = [(os.path.join(where, n), d) for n, d in hits[:self.LIMIT]]
+        self.listed = self.query_one(Input).value
+        lst.set_options([self.row(p, d) for p, d in self.shown])
+        lst.highlighted = 0 if self.shown else None
+
+    def row(self, path, is_dir):
+        name = os.path.basename(path) + ("/" if is_dir else "")
+        t = Text("✓ " if path in self.marked else "  ", "bold")
+        t.append(name if len(name) <= 60 else name[:59] + "…")
+        if not is_dir:
+            try:
+                t.append(" " * max(1, 62 - len(t)) + human(os.stat(path).st_size).rjust(9), "dim")
+            except OSError:
+                pass
+        return t
+
+    def picked(self):
+        if self.query_one(Input).value != self.listed:  # keys typed faster than Input.Changed arrives
+            self.relist()
+        at = self.query_one("#choices", OptionList).highlighted
+        return self.shown[at] if at is not None else None
+
+    def action_move(self, d):
+        lst = self.query_one("#choices", OptionList)
+        lst.action_cursor_down() if d > 0 else lst.action_cursor_up()
+
+    def action_fill(self):
+        """The highlighted entry into the path; a folder then lists its own contents."""
+        hit = self.picked()
+        if hit:
+            box = self.query_one(Input)
+            box.value = self.split()[0] + os.path.basename(hit[0]) + ("/" if hit[1] else "")
+            box.cursor_position = len(box.value)
+
+    def action_mark(self):
+        hit, lst = self.picked(), self.query_one("#choices", OptionList)
+        if hit and not hit[1]:
+            self.marked.remove(hit[0]) if hit[0] in self.marked else self.marked.append(hit[0])
+            at = lst.highlighted
+            self.relist()
+            lst.highlighted = at
+
+    def take(self, hit):
+        """A folder opens; a file is attached, or with files marked, the marked ones are."""
+        if hit and hit[1]:
+            self.action_fill()
+        elif self.marked or hit:
+            self.dismiss([os.path.abspath(p) for p in self.marked or [hit[0]]])
 
     @on(Input.Submitted)
-    def done(self, event):
-        p = Path(event.value.strip()).expanduser()
-        if p.is_file():
-            self.dismiss(str(p))
+    def done(self):
+        typed = Path(self.query_one(Input).value.strip()).expanduser()
+        if typed.is_file() and not self.marked:
+            self.dismiss([str(typed.absolute())])
         else:
-            self.query_one("#hint", Static).update(Text(f"No file at {p}", "red"))
+            self.take(None if self.marked else self.picked())
+
+    @on(OptionList.OptionSelected)
+    def clicked(self, event):
+        self.query_one(Input).focus()
+        self.take(self.shown[event.option_index])
 
 
 class ConfirmModal(Box):
