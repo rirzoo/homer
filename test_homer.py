@@ -168,6 +168,8 @@ contexts, real = [], (imaplib.IMAP4_SSL, smtplib.SMTP, gmail._password)
 
 
 class FakeTLS:
+    capabilities = ()
+
     def __init__(self, *a, ssl_context=None, **k):
         contexts.extend([ssl_context] if a[0] == "imap.gmail.com" else [])
 
@@ -378,7 +380,7 @@ with tempfile.TemporaryDirectory() as tmp:
         "code": 1, "out": "tty /\n", "err": "homer: nope\n"}  # die() is exit 1 with its message
     assert os.getcwd() == cwd
     daemon.SOCK = Path(tmp) / "homer.sock"
-    t = threading.Thread(target=daemon.serve, daemon=True)
+    t = threading.Thread(target=daemon.serve, args=(False,), daemon=True)  # no sync round against real accounts
     t.start()
     while not daemon.SOCK.exists():
         time.sleep(0.01)
@@ -388,6 +390,33 @@ with tempfile.TemporaryDirectory() as tmp:
     t.join(5)
     assert not t.is_alive() and daemon.call({"stop": True}) is None  # gone, and nothing listening
 cli.run, daemon._code_mtime = real_run, real_mtime
+
+# a sync round of the background service: listings saved for the TUI, and a notification only for new unread
+# mail from someone else in a folder picked with N (Mailbox unless you pick), never on the first round
+with tempfile.TemporaryDirectory() as tmp:
+    store.CACHE, store.FOLDERS_FILE, store.STATE_FILE = Path(tmp) / "c", Path(tmp) / "f.toml", Path(tmp) / "t.toml"
+    inbox = [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00", unread=True)]
+    fakes = types.SimpleNamespace(
+        special_folders=lambda n, a: {r"\Inbox": "INBOX", r"\All": "All", r"\Trash": "Trash"},
+        summaries=lambda n, a, f, k, q=None: [dict(m) for m in inbox] if f == "INBOX" else [])
+    real = homer.load_config, cli.BACKENDS, daemon.notify
+    homer.load_config, cli.BACKENDS = lambda: {"accounts": {"g": {"email": "me@x.com"}}}, {"gmail": fakes}
+    said = []
+    daemon.notify = lambda title, body: said.append((title, body))
+    daemon.sync_once()
+    acct = store.Account("g", {"email": "me@x.com"}, fakes, {})
+    assert [m["id"] for m in acct.cached("Mailbox")] == ["1"] and acct.fresh("Mailbox") and said == []
+    inbox[:0] = [row(2, "INBOX", "b@x.com", "t2", "2026-10-11T11:00:00+00:00", unread=True),
+                 row(3, "INBOX", "me@x.com", "t3", "2026-10-11T12:00:00+00:00", unread=True)]
+    daemon.sync_once()
+    assert said == [("homer · g · Mailbox", "b@x.com: st2")], said
+    store.save_state({"notify": {"g": ["Archive"]}})
+    assert store.load_state() == {"notify": {"g": ["Archive"]}}
+    inbox.insert(0, row(4, "INBOX", "c@x.com", "t4", "2026-10-11T13:00:00+00:00", unread=True))
+    daemon.sync_once()
+    assert len(said) == 1 and len(acct.cached("Mailbox")) == 4  # saved, but Mailbox is no longer announced
+    assert not list(acct.dir.glob("*.tmp"))
+    homer.load_config, cli.BACKENDS, daemon.notify = real
 print("daemon ok")
 
 # the TUI itself, driven headless against a fake backend: archive + undo, then send a mail
@@ -575,4 +604,116 @@ else:
                 await check(1)
 
         asyncio.run(drive3())
+
+        # attaching: the folder is listed under the path, any part of a name or a glob finds a file, ignoring
+        # case; Tab opens a folder, ctrl+space marks files and Enter attaches the marked ones
+        ents = [("2026-Report-final.pdf", False), ("report.txt", False), ("Reports", True), (".hidden", False)]
+        assert tui.modals.path_matches(ents, "rep") == [ents[1], ents[2], ents[0]]
+        assert tui.modals.path_matches(ents, "REPORT*") == [ents[1], ents[2]]
+        assert tui.modals.path_matches(ents, "") == ents[:3] and tui.modals.path_matches(ents, ".h") == [ents[3]]
+        files = Path(tmp) / "files"
+        (files / "Sub").mkdir(parents=True)
+        for n in ("filename-that-is-long.pdf", "other.txt", "Sub/inner.txt"):
+            (files / n).write_text("x")
+
+        async def drive4():
+            tui.app.BACKENDS = {"gmail": fake3}
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(140, 30)) as pilot:
+                await pilot.pause(0.3)
+                await pilot.press("c", "escape", "a")
+                await pilot.pause(0.2)
+                pick = app.screen
+                pick.query_one("#path").value = f"{files}/filen*"
+                await pilot.pause(0.1)
+                assert [os.path.basename(p) for p, _ in pick.shown] == ["filename-that-is-long.pdf"]
+                await pilot.press("enter")
+                await pilot.pause(0.1)
+                compose = app.screen
+                assert compose.st["attach"] == [str(files / "filename-that-is-long.pdf")]
+                assert app.attach_dir == f"{files}/"
+                await pilot.press("a")
+                await pilot.pause(0.2)
+                pick = app.screen
+                assert pick.query_one("#path").value == f"{files}/" and len(pick.shown) == 3
+                await pilot.press(*"SU", "tab")  # a folder: Tab goes into it
+                await pilot.pause(0.1)
+                assert pick.query_one("#path").value == f"{files}/Sub/" and len(pick.shown) == 1
+                await pilot.press("backspace", *"/../OTH", "ctrl+space")
+                await pilot.pause(0.1)
+                assert "1 marked" in str(pick.query_one("#hint").render())
+                assert [Path(p).name for p in pick.marked] == ["other.txt"], (pick.marked, pick.query_one("#path").value)
+                await pilot.press(*["backspace"] * 3, "ctrl+space", "enter")  # the first row now: filename…
+                await pilot.pause(0.1)
+                assert [Path(p).name for p in compose.st["attach"]] == [
+                    "filename-that-is-long.pdf", "other.txt", "filename-that-is-long.pdf"]
+                await pilot.press("a")
+                await pilot.pause(0.2)
+                app.screen.query_one("#path").value = "/no/such/folder/x"
+                await pilot.pause(0.1)
+                assert "Can't read" in str(app.screen.query_one("#hint").render())
+                app.screen.query_one("#path").value = f"{files}/zzz"
+                await pilot.pause(0.1)
+                assert 'No match for "zzz"' in str(app.screen.query_one("#hint").render())
+
+        asyncio.run(drive4())
+
+        # Archive fed by two server folders: e asks which, and offers the last one picked first next time
+        store.save_maps({"g": {"Archive": ["All", "Old"]}})
+        box.update(INBOX=[row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00"),
+                          row(2, "INBOX", "b@x.com", "t2", "2026-10-11T11:00:00+00:00")], Old=[], Sent=[])
+
+        async def drive5():
+            tui.app.BACKENDS = {"gmail": fake}
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                await pilot.press("e")
+                await pilot.pause(0.2)
+                assert isinstance(app.screen, tui.modals.MovePicker) and app.screen.choices == ["All", "Old"]
+                await pilot.press(*"old", "enter")
+                await pilot.pause(0.3)
+                assert done[-1] == ("INBOX", "Old") and len(app.screen.convs) == 1, (done[-1], app.screen.convs)
+                await pilot.press("e")
+                await pilot.pause(0.2)
+                assert app.screen.choices == ["Old", "All"]
+                await pilot.press("escape")
+                await pilot.pause(0.2)
+                assert done[-1] == ("INBOX", "Old") and len(app.screen.convs) == 1  # Esc moved nothing
+                store.save_maps({})
+                app.screen.acct.maps = {}
+                await pilot.press("e")
+                await pilot.pause(0.3)
+                assert done[-1] == ("INBOX", "All")  # one source: straight there
+
+        asyncio.run(drive5())
+
+        # with the background service running and a listing it saved just now, the TUI opens without syncing,
+        # takes newer listings as the service saves them, and mail moved away here doesn't come back from one
+        asked = []
+        served = [row(1, "INBOX", "a@x.com", "t1", "2026-10-11T10:00:00+00:00"),
+                  row(2, "INBOX", "b@x.com", "t2", "2026-10-11T11:00:00+00:00")]
+        fake6 = types.SimpleNamespace(**{**vars(fake), "summaries": lambda *a, **k: asked.append(a) or []})
+        store.Account("g", {"email": "me@x.com"}, fake6, {}).store("Mailbox", served)
+        real_running = daemon.running
+        daemon.running = lambda: True
+
+        async def drive6():
+            tui.app.BACKENDS = {"gmail": fake6}
+            app = tui.Homer({"accounts": {"g": {"email": "me@x.com"}}}, "g")
+            async with app.run_test(size=(110, 30)) as pilot:
+                await pilot.pause(0.5)
+                main = app.screen
+                assert asked == [] and [c["key"] for c in main.convs] == ["t2", "t1"] and main.synced_at
+                await pilot.press("e")  # t2 into All, the one Archive source
+                await pilot.pause(0.3)
+                time.sleep(0.01)
+                store.Account("g", {"email": "me@x.com"}, fake6, {}).store(  # saved by the service before the move
+                    "Mailbox", served + [row(5, "INBOX", "c@x.com", "t5", "2026-10-11T12:00:00+00:00", unread=True)])
+                await pilot.pause(1.3)
+                assert [c["key"] for c in main.convs] == ["t5", "t1"] and asked == []
+                assert "1 new in Mailbox" in str(main.query_one(tui.Status).render())
+
+        asyncio.run(drive6())
+        daemon.running = real_running
         print("tui ok")

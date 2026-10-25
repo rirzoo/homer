@@ -19,7 +19,7 @@ from textual.widgets.option_list import Option
 from .. import store
 from ..common import attachments, body_text
 from . import base
-from .base import ADDR, HELP, addresses, bad_addresses, err, human
+from .base import ADDR, HELP, addresses, bad_addresses, err, human, open_external
 from .widgets import Header, Status
 from .modals import HelpScreen, MovePicker, PathModal
 
@@ -40,12 +40,14 @@ class ComposeScreen(Screen):
         Binding("down", "arrow(1)", show=False), Binding("up", "arrow(-1)", show=False),
         Binding("escape", "commands", "commands"),
         Binding("s", "send_key", "send"), Binding("b", "body", "edit body"), Binding("a", "attach", "attach"),
-        Binding("X", "unattach", "remove attachment"), Binding("d", "close('draft')", "save draft"),
+        Binding("X", "unattach", "remove attachment"), Binding("o", "open", "open attachment"),
+        Binding("d", "close('draft')", "save draft"),
         Binding("q", "close('close')", "close"), Binding("D", "close('discard')", "discard"),
         Binding("question_mark", "help", show=False),
     ]
     FIELDS = ("to", "cc", "bcc", "subject")
-    COMMANDS = {"send_key", "body", "attach", "unattach", "close"}  # single keys: only outside the fields
+    COMMANDS = {"send_key", "body", "attach", "unattach", "open", "close"}  # single keys: only outside the fields
+    AUTO_FOCUS = ""  # on_mount picks the field; after a popup, stay in command mode instead of jumping to From
 
     def __init__(self, st):
         super().__init__()
@@ -153,8 +155,8 @@ class ComposeScreen(Screen):
         self.hide_suggest()
         self.set_focus(None)
         self.refresh_bindings()
-        self.query_one(Status).say("s send  b edit body  a attach  X remove attachment  d save draft  q close  D discard"
-                                   "  ·  Tab back to the fields")
+        self.query_one(Status).say("s send  b edit body  a attach  o open attachment  X remove one  d save draft  q close"
+                                   "  D discard  ·  Tab back to the fields")
 
     def action_field(self, d):
         sug = self.query_one("#suggest", OptionList)
@@ -228,11 +230,22 @@ class ComposeScreen(Screen):
         self.action_commands()
 
     def action_attach(self):
-        def add(path):
-            if path:
-                self.st["attach"].append(path)
+        def add(paths):
+            if paths:
+                self.st["attach"] += paths
+                where = Path(paths[-1]).parent  # the next attach starts there, written with ~ like you'd type it
+                rel = where.relative_to(Path.home()) if where.is_relative_to(Path.home()) else None
+                self.app.attach_dir = "~/" + "".join(f"{p}/" for p in rel.parts) if rel else f"{where}/".replace("//", "/")
                 self.paint()
-        self.app.push_screen(PathModal(), add)
+        self.app.push_screen(PathModal(self.app.attach_dir), add)
+
+    def action_open(self):
+        """Open an attachment in its app, to check it's the right file."""
+        if len(self.st["attach"]) == 1:
+            return open_external(self.st["attach"][0])
+        names = {Path(p).name: p for p in self.st["attach"]}
+        if names:
+            self.app.push_screen(MovePicker("Open attachment", list(names)), lambda n: n and open_external(names[n]))
 
     def action_unattach(self):
         if not self.st["attach"]:

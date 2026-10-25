@@ -100,6 +100,7 @@ class Homer(App):
         self.accounts = {n: store.Account(n, a, BACKENDS[a.get("provider", "gmail")], maps, names.get(n))
                          for n, a in cfg.get("accounts", {}).items() if a.get("provider", "gmail") in BACKENDS}
         self.first, self.outbox, self.look, self.config_note = name, [], cfg.get("tui", {}), ""
+        self.attach_dir = "~/"  # where the attach box starts: the folder of the last file attached
 
     def colors(self):
         """Role styles as written: what you set with ctrl+t, else [tui.colors] in the config, else the default."""
