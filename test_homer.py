@@ -320,6 +320,39 @@ assert gmail._native({**blank, "from": ["z@x.com"], "delete": True}) == {
     "criteria": {"from": "z@x.com"}, "action": {"addLabelIds": ["TRASH"]}}
 print("rules ok")
 
+# the background helper: a command runs as `homer` would, over a real socket, and a code change makes it step aside
+import os  # noqa: E402
+import sys  # noqa: E402
+from homer import daemon  # noqa: E402
+
+
+def fake_run(a):
+    print(sys.stdin.read() if not sys.stdin.isatty() else "tty", os.getcwd())
+    if a.cmd == "mark":
+        homer.die("nope")
+
+
+real_run, real_mtime, cwd = cli.run, daemon._code_mtime, os.getcwd()
+cli.run = fake_run
+with tempfile.TemporaryDirectory() as tmp:
+    assert daemon.handle({"argv": ["send", "--to", "x@x.com", "-s", "hi"], "cwd": tmp, "stdin": "body"}) == {
+        "code": 0, "out": f"body {tmp}\n", "err": ""}  # piped stdin and the caller's directory
+    assert daemon.handle({"argv": ["mark", "read", "1"], "cwd": "/", "stdin": None}) == {
+        "code": 1, "out": "tty /\n", "err": "homer: nope\n"}  # die() is exit 1 with its message
+    assert os.getcwd() == cwd
+    daemon.SOCK = Path(tmp) / "homer.sock"
+    t = threading.Thread(target=daemon.serve, daemon=True)
+    t.start()
+    while not daemon.SOCK.exists():
+        time.sleep(0.01)
+    assert daemon.call({"argv": ["list"], "cwd": "/", "stdin": None}) == {"code": 0, "out": "tty /\n", "err": ""}
+    daemon._code_mtime = lambda: real_mtime() + 1  # homer was updated
+    assert daemon.call({"argv": ["list"], "cwd": "/", "stdin": None}) is None and not daemon.SOCK.exists()
+    t.join(5)
+    assert not t.is_alive() and daemon.call({"stop": True}) is None  # gone, and nothing listening
+cli.run, daemon._code_mtime = real_run, real_mtime
+print("daemon ok")
+
 # the TUI itself, driven headless against a fake backend: archive + undo, then send a mail
 try:
     from homer import tui

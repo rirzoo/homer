@@ -219,6 +219,8 @@ homer         [-a ACCT]                          open the TUI (same as homer tui
 
 `--to`, `--cc`, `--bcc` and `--attach` can be repeated. Without `-b`, the body is read from stdin (`homer send ... < body.txt`). `--draft` saves to Drafts instead of sending.
 
+Homer keeps its mail connections open between commands. The first command starts a small background process that stays signed in, and later commands run through it instead of connecting and logging in again. That takes a Gmail `list` from about 2 seconds to about 1, and an Outlook one from about 1 second to 0.3, which adds up when an agent runs `list`, `read` and `reply` in a row. The process quits after 10 minutes without a command, and a fresh one takes over when Homer is updated. Only your user can reach it. `homer login` and the TUI don't use it, and `HOMER_DAEMON=0` turns it off.
+
 `reply` answers the sender of message `ID` (add `--all` to include everyone else on it). It adds "Re:" to the subject, quotes the original under your text, and sets the headers mail apps use to keep the reply in the same conversation. Replying to a message you sent yourself goes to its original recipients, which is handy for a follow-up.
 
 `forward` sends message `ID` to the `--to` addresses (and any `--cc`/`--bcc`), attachments included. The subject gets "Fwd:", and the original's From, Date, Subject, To and Cc lines sit above its text. Put a note on top with `-b` or on stdin, or leave it out: `homer forward 4321 --to friend@example.com`.
@@ -401,6 +403,7 @@ Each value is a [Rich style](https://rich.readthedocs.io/en/stable/style.html). 
 - Gmail `AUTHENTICATIONFAILED` usually means you used your normal password. Homer needs an app password, created on the same account as `email`.
 - `password prompt needs a real terminal` shows up when something else is capturing input. Run `homer login` in a normal terminal window.
 - `secret-tool not found` means libsecret isn't installed (see Requirements).
+- `lost the background helper during the command` means the background process stopped while it was running your command. The command may have gone through, so check Sent or Drafts before you run a send again. `HOMER_DAEMON=0` turns the process off while you look into it.
 
 If you're stuck or something's broken, [open an issue](https://github.com/rirzoo/homer/issues) with the command you ran and the full error, minus your email address and any tokens. Feature requests (macOS keychain support, say) and pull requests are welcome too.
 
@@ -408,7 +411,7 @@ If you're stuck or something's broken, [open an issue](https://github.com/rirzoo
 
 Homer runs on your computer, and there's no Homer server. It connects only to the mail services in your config. For Gmail, those are Google's IMAP and SMTP servers, plus Google's sign-in and the Gmail API once you set up filters. For Microsoft 365, they're Microsoft's sign-in and its mail APIs. Homer collects no analytics and sends nothing to the Homer project or anyone else.
 
-App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. You can delete that folder at any time.
+App passwords and sign-in tokens are stored in your system keyring. The config file holds your addresses and app client IDs. Under `~/.cache/homer`, Homer keeps the message lists it last showed you, mail you're writing in the TUI until it's sent, and messages you've opened in a browser or another app. You can delete that folder at any time. Between commands, a background process holds your open mail connections and sign-in tokens in memory until 10 minutes after your last command. Only your user can reach it, through a socket in your private runtime folder.
 
 Once you allow filter access, Homer reads and changes your Gmail filters and reads your label names, and it does this only when you run a command that needs them. Homer's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
 
@@ -420,7 +423,7 @@ To remove what Homer keeps, run `secret-tool clear service homer` for the passwo
 python3 test_homer.py      # offline self-check: messages, backends, the TUI's data and a headless TUI run
 ```
 
-Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
+Code layout: `homer/cli.py` (commands), `homer/gmail.py` (IMAP/SMTP, plus the Gmail API for filters), `homer/outlook.py` (Microsoft Graph + OAuth, inbox rules), `homer/common.py` (config, keyring, MIME helpers, search syntax), `homer/daemon.py` (the background process that keeps connections open between commands), `homer/store.py` (the TUI's folders, conversations and cache), `homer/tui/` (the Textual TUI: `app.py` starts it, `base.py` has the helpers all windows share, and each other module holds one window or a group of them).
 
 Each backend keeps one connection per account open for as long as the process runs, reconnects by itself when it drops, and can be called from several threads, so the TUI logs in once instead of on every keypress. Saving drafts, creating folders and sending over SMTP still use a fresh connection each time. Pass `ids=True` to `outlook.list_messages` to get full Graph ids back without overwriting the row numbers agents rely on.
 
