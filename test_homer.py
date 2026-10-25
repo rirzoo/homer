@@ -354,6 +354,9 @@ assert gmail._native({**blank, "from": ["z@x.com"], "delete": True}) == {
     "criteria": {"from": "z@x.com"}, "action": {"addLabelIds": ["TRASH"]}}
 print("rules ok")
 
+# S5: the CLI prints mail without terminal control characters, keeping newlines and tabs
+assert cli.plain("a\x1b[31mb\r\x9bc\x07\n\td") == "a[31mbc\n\td"
+
 # the background helper: a command runs as `homer` would, over a real socket, and a code change makes it step aside
 import os  # noqa: E402
 import sys  # noqa: E402

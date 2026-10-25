@@ -5,6 +5,7 @@ import email.policy
 import imaplib
 import io
 import os
+import re
 import signal
 import smtplib
 import subprocess
@@ -16,6 +17,13 @@ from .common import (attachments, body_text, build_forward, build_message, build
                      private_dirs, save_attachments)
 
 BACKENDS = {"gmail": gmail, "outlook": outlook}
+CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # all but \t and \n: escape sequences, \r, bells
+
+
+def plain(text):
+    """Text from a mail or the server, safe to print: no escape sequences that recolour, move the cursor,
+    rewrite earlier lines or set the window title (S5)."""
+    return CONTROL.sub("", str(text))
 
 
 def account(cfg, a):
@@ -40,14 +48,14 @@ def cmd_login(a, cfg):
 
 def cmd_folders(a, cfg):
     name, acct, backend = account(cfg, a)
-    print("\n".join(backend.folders(name, acct)))
+    print(plain("\n".join(backend.folders(name, acct))))
 
 
 def cmd_list(a, cfg):
     name, acct, backend = account(cfg, a)
     for ref, unread, when, who, subject in backend.list_messages(name, acct, a.folder, a.n, a.unread, a.search):
         date = when.astimezone().strftime("%Y-%m-%d %H:%M") if when else ""
-        print(f"{ref:>7} {'*' if unread else ' '} {date:16}  {who[:28]:28}  {subject}")
+        print(plain(f"{ref:>7} {'*' if unread else ' '} {date:16}  {plain(who)[:28]:28}  {subject}"))
 
 
 def cmd_read(a, cfg):
@@ -55,14 +63,15 @@ def cmd_read(a, cfg):
     msg = email.message_from_bytes(backend.fetch_raw(name, acct, a.folder, a.id), policy=email.policy.default)
     for h in ("From", "To", "Cc", "Date", "Subject"):
         if msg[h]:
-            print(f"{h}: {msg[h]}")
+            print(plain(f"{h}: {msg[h]}"))
     print()
-    print(body_text(msg))
+    print(plain(body_text(msg)))
     parts = attachments(msg)
     if parts:
         print("\nAttachments:")
         for n, p in enumerate(parts, 1):
-            print(f"  [{n}] {p.get_filename()} ({p.get_content_type()}, {len(p.get_payload(decode=True) or b'')} bytes)")
+            size = len(p.get_payload(decode=True) or b"")
+            print(plain(f"  [{n}] {p.get_filename()} ({p.get_content_type()}, {size} bytes)"))
     if a.save:
         for path in save_attachments(parts, a.save):
             print(f"saved {path}")
@@ -98,10 +107,10 @@ def cmd_reply(a, cfg):
     rcpts = [ad.addr_spec for h in ("To", "Cc") if msg[h] for ad in msg[h].addresses]
     if a.draft:
         backend.save_draft(name, acct, msg)
-        print(f"reply draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}")
+        print(plain(f"reply draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}"))
     else:
         backend.send(name, acct, msg, rcpts)
-        print(f"replied from {acct['email']} to {', '.join(rcpts)}: {msg['Subject']}")
+        print(plain(f"replied from {acct['email']} to {', '.join(rcpts)}: {msg['Subject']}"))
 
 
 def cmd_forward(a, cfg):
@@ -114,10 +123,10 @@ def cmd_forward(a, cfg):
     msg = build_forward(acct, orig, a.to, a.cc, a.bcc, body, a.attach, a.html, a.attached)
     if a.draft:
         backend.save_draft(name, acct, msg)
-        print(f"forward draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}")
+        print(plain(f"forward draft saved in {acct['email']} Drafts (not sent): {msg['Subject']}"))
     else:
         backend.send(name, acct, msg, a.to + a.cc + a.bcc)
-        print(f"forwarded from {acct['email']} to {', '.join(a.to + a.cc + a.bcc)}: {msg['Subject']}")
+        print(plain(f"forwarded from {acct['email']} to {', '.join(a.to + a.cc + a.bcc)}: {msg['Subject']}"))
 
 
 def cmd_tui(a, cfg):
