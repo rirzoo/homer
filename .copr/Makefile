@@ -11,7 +11,6 @@ srpm:
 	mkdir -p $(outdir)
 	git -C $(top) archive --prefix=homer-$(version)/ -o $(outdir)/homer-$(version).tar.gz HEAD
 	rm -rf $(outdir)/vendor
-	python3 -m pip download --only-binary=:all: --dest $(outdir)/vendor \
-	    $$(python3 -c 'import tomllib; print(*tomllib.load(open("$(top)/pyproject.toml", "rb"))["project"]["dependencies"])')
+	python3 -m pip download --only-binary=:all: --require-hashes -r $(top)/.copr/requirements.txt --dest $(outdir)/vendor
 	tar -czf $(outdir)/homer-vendor-$(version).tar.gz -C $(outdir) vendor
 	rpmbuild -bs $(top)/homer.spec --define "_sourcedir $(outdir)" --define "_srcrpmdir $(outdir)"
